@@ -7,10 +7,11 @@ and the existing codebase. It uses a Large Language Model (LLM) and a Jinja2
 template to guide the report generation process. The LLM is instructed to output
 raw Markdown.
 """
+
 import re
 from typing import List, Optional
 
-from jinja2 import Environment, BaseLoader
+from jinja2 import BaseLoader, Environment
 
 from src.llm import LLM
 from src.logger import Logger
@@ -89,9 +90,11 @@ class Reporter:
         # Common patterns: ```markdown ... ``` or ``` ... ```
         match = re.search(r"```(?:markdown\s*)?(.*?)```", response, re.DOTALL)
         if match:
-            logger.info("Markdown code block found in reporter response, extracting content.")
+            logger.info(
+                "Markdown code block found in reporter response, extracting content."
+            )
             return match.group(1).strip()
-        
+
         # If no code block, assume the entire response is the intended raw Markdown.
         return response.strip()
 
@@ -128,13 +131,17 @@ class Reporter:
         )
 
         if not llm_response_str or not llm_response_str.strip():
-            logger.error("LLM returned an empty or whitespace-only response for reporter.")
+            logger.error(
+                "LLM returned an empty or whitespace-only response for reporter."
+            )
             return None
 
         # The validate_response was essentially parsing, so combined.
         parsed_report = self.parse_response(llm_response_str)
 
-        if not parsed_report: # Should not happen if parse_response returns stripped original
+        if (
+            not parsed_report
+        ):  # Should not happen if parse_response returns stripped original
             logger.error("Failed to get a valid report from LLM after parsing.")
             return None
 

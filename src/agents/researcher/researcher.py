@@ -7,11 +7,12 @@ formulate questions for the user to gather necessary information. It uses a
 Large Language Model (LLM) and a Jinja2 template for this purpose. The output
 is expected to be in a structured JSON format.
 """
+
 import json
 import re
-from typing import List, Dict, TypedDict, Optional
+from typing import Dict, List, Optional, TypedDict
 
-from jinja2 import Environment, BaseLoader
+from jinja2 import BaseLoader, Environment
 
 from src.llm import LLM
 from src.logger import Logger
@@ -109,8 +110,9 @@ class Researcher:
         if match:
             json_string = match.group(1)
         else:
-            logger.info("No JSON code block found in researcher response, attempting to parse entire response.")
-
+            logger.info(
+                "No JSON code block found in researcher response, attempting to parse entire response."
+            )
 
         try:
             parsed_json: Dict = json.loads(json_string)
@@ -172,7 +174,7 @@ class Researcher:
             return None
 
         contextual_keywords_str: str = ", ".join(
-            map(lambda k: k.capitalize(), contextual_keywords)
+            k.capitalize() for k in contextual_keywords
         )
         prompt = self.render(step_by_step_plan, contextual_keywords_str)
 

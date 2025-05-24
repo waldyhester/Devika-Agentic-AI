@@ -6,20 +6,23 @@ and running commands within a Firejail sandbox to securely execute code from
 Devika-generated projects. It handles subprocess management, output capturing,
 and error reporting.
 """
-import subprocess
-import os
-from typing import List, Tuple, Optional, TypedDict, Dict, Any
 
-from src.logger import Logger
+import os
+import subprocess
+from typing import List, Optional, TypedDict
+
 from src.config import Config
+from src.logger import Logger
 
 logger = Logger()
+config = Config() # Module-level Config instance
 
 # Default Firejail profile - consider making this configurable or more specific
 # For a very restrictive environment, a custom profile is recommended.
 # Example: "/etc/firejail/default.profile" or a custom one like "/etc/firejail/devika.profile"
-DEFAULT_FIREJAIL_PROFILE_NAME = "default.profile" 
-FIREJAIL_EXECUTABLE = "firejail" # Assumes firejail is in PATH
+# DEFAULT_FIREJAIL_PROFILE_NAME = "default.profile" # Will be handled by config or argument
+FIREJAIL_EXECUTABLE = config.get_firejail_executable_path()
+
 
 class CodeExecutionResult(TypedDict):
     """
@@ -33,6 +36,7 @@ class CodeExecutionResult(TypedDict):
         error_message (Optional[str]): An additional error message if execution failed at
                                      the subprocess level (e.g., timeout, Firejail not found).
     """
+
     stdout: str
     stderr: str
     return_code: int
@@ -63,30 +67,43 @@ class CodeRunner:
         config (Config): Application configuration instance.
     """
 
-    def __init__(self, firejail_profile_path: Optional[str] = None) -> None:
+    def __init__(self, firejail_profile_path_arg: Optional[str] = None) -> None:
         """
         Initialize the CodeRunner.
 
         Args:
-            firejail_profile_path (Optional[str]): Path to a custom Firejail profile.
-                                              If None, Firejail's default profile selection
-                                              mechanism will be used (often `/etc/firejail/default.profile`
-                                              or a profile based on the command if `noprofile` isn't used).
+            firejail_profile_path_arg (Optional[str]): Path to a custom Firejail profile.
+                                                       If None, it attempts to use the path
+                                                       from `config.get_firejail_default_profile_path()`.
+                                                       If that's also None/empty, Firejail's
+                                                       default behavior or internal restrictive
+                                                       options will apply.
         """
-        self.firejail_profile_path: Optional[str] = firejail_profile_path
-        self.config: Config = Config()
+        self.config: Config = Config() # Instance config for other methods if needed
         
+        effective_profile_path = firejail_profile_path_arg
+        if effective_profile_path is None:
+            effective_profile_path = self.config.get_firejail_default_profile_path()
+        
+        self.firejail_profile_path: Optional[str] = effective_profile_path
+
         # Simple check if firejail command seems available
         try:
-            subprocess.run([FIREJAIL_EXECUTABLE, "--version"], capture_output=True, check=False)
-            logger.info(f"CodeRunner initialized. Firejail executable found. Profile: {firejail_profile_path or 'Firejail default'}")
+            subprocess.run(
+                [FIREJAIL_EXECUTABLE, "--version"], capture_output=True, check=False
+            )
+            logger.info(
+                f"CodeRunner initialized. Firejail executable found. Profile: {self.firejail_profile_path or 'Firejail default/restrictive fallback'}"
+            )
         except FileNotFoundError:
             logger.error(
                 f"Firejail executable '{FIREJAIL_EXECUTABLE}' not found. "
                 "Code execution will not be sandboxed properly. Please install Firejail."
             )
             # Depending on policy, could raise an error here.
-
+    
+    # Removed DEFAULT_FIREJAIL_PROFILE_NAME as its logic is now incorporated
+    # into __init__ and _construct_firejail_command through self.firejail_profile_path
 
     def _construct_firejail_command(
         self, project_code_path_host: str, command_to_run_in_sandbox: List[str]
@@ -104,7 +121,7 @@ class CodeRunner:
 
         Returns:
             List[str]: The fully constructed command list suitable for `subprocess.run()`.
-        
+
         Notes on Firejail options used:
             --quiet: Suppress Firejail's own startup messages.
             --noprofile: Starts with a very minimal profile (essentially empty).
@@ -135,50 +152,56 @@ class CodeRunner:
         # Apply a specific profile if provided and exists
         if self.firejail_profile_path and os.path.exists(self.firejail_profile_path):
             firejail_command.extend([f"--profile={self.firejail_profile_path}"])
-        elif self.firejail_profile_path: # Profile specified but not found
-             logger.warning(
-                 f"Specified Firejail profile '{self.firejail_profile_path}' not found. "
-                 "Applying default restrictive options instead."
-             )
-             # Apply a restrictive set of options if a custom profile is missing
-             firejail_command.extend([
-                "--quiet",
-                "--noprofile", # Start clean if specific profile is missing
-                f"--read-only={project_code_path_host}",
-                f"--whitelist={project_code_path_host}",
-                "--private", # Minimal /home
-                "--private-tmp",
-                "--private-dev",
-                "--net=none",
-                "--caps.drop=all",
-                "--seccomp",
-                "--nogroups",
-                "--nonewprivs",
-                "--noroot",
-             ])
-        else: # No custom profile specified, use a sensible default restrictive set
-            logger.info("No custom Firejail profile specified, applying default restrictive options.")
-            firejail_command.extend([
-                "--quiet",
-                "--noprofile",
-                f"--read-only={project_code_path_host}",
-                f"--whitelist={project_code_path_host}",
-                "--private",
-                "--private-tmp",
-                "--private-dev",
-                "--net=none",
-                "--caps.drop=all",
-                "--seccomp",
-                "--nogroups",
-                "--nonewprivs",
-                "--noroot",
-            ])
-        
-        firejail_command.append(f"--hostname=devika-sandbox")
+        elif self.firejail_profile_path:  # Profile specified but not found
+            logger.warning(
+                f"Specified Firejail profile '{self.firejail_profile_path}' not found. "
+                "Applying default restrictive options instead."
+            )
+            # Apply a restrictive set of options if a custom profile is missing
+            firejail_command.extend(
+                [
+                    "--quiet",
+                    "--noprofile",  # Start clean if specific profile is missing
+                    f"--read-only={project_code_path_host}",
+                    f"--whitelist={project_code_path_host}",
+                    "--private",  # Minimal /home
+                    "--private-tmp",
+                    "--private-dev",
+                    "--net=none",
+                    "--caps.drop=all",
+                    "--seccomp",
+                    "--nogroups",
+                    "--nonewprivs",
+                    "--noroot",
+                ]
+            )
+        else:  # No custom profile specified, use a sensible default restrictive set
+            logger.info(
+                "No custom Firejail profile specified, applying default restrictive options."
+            )
+            firejail_command.extend(
+                [
+                    "--quiet",
+                    "--noprofile",
+                    f"--read-only={project_code_path_host}",
+                    f"--whitelist={project_code_path_host}",
+                    "--private",
+                    "--private-tmp",
+                    "--private-dev",
+                    "--net=none",
+                    "--caps.drop=all",
+                    "--seccomp",
+                    "--nogroups",
+                    "--nonewprivs",
+                    "--noroot",
+                ]
+            )
+
+        firejail_command.append("--hostname=devika-sandbox")
         # Set working directory inside sandbox to be the project path
         firejail_command.append(f"--pwd={project_code_path_host}")
         firejail_command.extend(command_to_run_in_sandbox)
-        
+
         return firejail_command
 
     def execute_code(
@@ -203,21 +226,29 @@ class CodeRunner:
                                  return code, success status, and any error messages.
         """
         project_slug = project_name.lower().replace(" ", "-")
-        project_code_path_host = os.path.join(self.config.get_projects_dir(), project_slug)
+        project_code_path_host = os.path.join(
+            self.config.get_projects_dir(), project_slug
+        )
 
         if not os.path.isdir(project_code_path_host):
             err_msg = f"Project directory for '{project_name}' not found at: {project_code_path_host}"
             logger.error(err_msg)
             return CodeExecutionResult(
-                stdout="", stderr=err_msg, return_code=-1,
-                success=False, error_message="Project directory not found"
+                stdout="",
+                stderr=err_msg,
+                return_code=-1,
+                success=False,
+                error_message="Project directory not found",
             )
 
         if not command_to_run:
             logger.error("No command provided to execute_code.")
             return CodeExecutionResult(
-                stdout="", stderr="No command provided.", return_code=-1,
-                success=False, error_message="No command provided"
+                stdout="",
+                stderr="No command provided.",
+                return_code=-1,
+                success=False,
+                error_message="No command provided",
             )
 
         firejail_full_command = self._construct_firejail_command(
@@ -233,30 +264,42 @@ class CodeRunner:
                 # `cwd` for subprocess.run itself is less critical if Firejail's --pwd handles it,
                 # but setting it to project_path_host can be a fallback.
                 # However, Firejail's --pwd should make the internal CWD correct.
-                check=False, # Do not raise CalledProcessError for non-zero exit codes
+                check=False,  # Do not raise CalledProcessError for non-zero exit codes
             )
             stdout = process.stdout.decode("utf-8", errors="replace")
             stderr = process.stderr.decode("utf-8", errors="replace")
             return_code = process.returncode
             success = return_code == 0
-            
-            log_func = logger.info if success else logger.warning
-            log_func(f"Command executed. Return code: {return_code}. Success: {success}.")
-            if stdout: logger.debug(f"Stdout:\n{stdout}")
-            if stderr and not success: logger.warning(f"Stderr:\n{stderr}")
-            elif stderr: logger.debug(f"Stderr (command succeeded but stderr not empty):\n{stderr}")
 
+            log_func = logger.info if success else logger.warning
+            log_func(
+                f"Command executed. Return code: {return_code}. Success: {success}."
+            )
+            if stdout:
+                logger.debug(f"Stdout:\n{stdout}")
+            if stderr and not success:
+                logger.warning(f"Stderr:\n{stderr}")
+            elif stderr:
+                logger.debug(
+                    f"Stderr (command succeeded but stderr not empty):\n{stderr}"
+                )
 
             return CodeExecutionResult(
-                stdout=stdout, stderr=stderr, return_code=return_code,
-                success=success, error_message=None
+                stdout=stdout,
+                stderr=stderr,
+                return_code=return_code,
+                success=success,
+                error_message=None,
             )
         except subprocess.TimeoutExpired:
             timeout_msg = f"Command timed out after {timeout_seconds} seconds: {' '.join(command_to_run)}"
             logger.warning(timeout_msg)
             return CodeExecutionResult(
-                stdout="", stderr=timeout_msg, return_code=-1, # Using -1 for timeout
-                success=False, error_message="TimeoutExpired"
+                stdout="",
+                stderr=timeout_msg,
+                return_code=-1,  # Using -1 for timeout
+                success=False,
+                error_message="TimeoutExpired",
             )
         except FileNotFoundError:
             fnf_msg = (
@@ -265,18 +308,25 @@ class CodeRunner:
             )
             logger.error(fnf_msg)
             return CodeExecutionResult(
-                stdout="", stderr=fnf_msg, return_code=-1,
-                success=False, error_message="Firejail not found"
+                stdout="",
+                stderr=fnf_msg,
+                return_code=-1,
+                success=False,
+                error_message="Firejail not found",
             )
         except Exception as e:
             error_msg = f"An unexpected error occurred during code execution: {e}"
             logger.error(error_msg, exc_info=True)
             return CodeExecutionResult(
-                stdout="", stderr=str(e), return_code=-1, # Generic error code
-                success=False, error_message=f"Unexpected error: {type(e).__name__}"
+                stdout="",
+                stderr=str(e),
+                return_code=-1,  # Generic error code
+                success=False,
+                error_message=f"Unexpected error: {type(e).__name__}",
             )
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     # This example block is for direct testing of this script.
     # It assumes a project "test-project-runner" exists in your configured projects directory.
     # You would need to create this directory and a sample file for testing.
@@ -285,25 +335,26 @@ if __name__ == '__main__':
     #   print("Hello from sandboxed Python!")
     #   print(f"Current working directory in sandbox: {os.getcwd()}")
     #   # The following line will likely fail due to Firejail's default restrictions
-    #   # print(f"Files in /: {os.listdir('/')}") 
+    #   # print(f"Files in /: {os.listdir('/')}")
     #   # To test stderr:
     #   # import sys
     #   # sys.stderr.write("This is a test error message\\n")
     #   # sys.exit(1)
 
-
     logger.info("Starting CodeRunner example execution...")
-    
+
     # Initialize with a default restrictive profile (or specify a custom one)
     # For this example, we'll rely on the default options in _construct_firejail_command
     # if no profile path is given or if the default profile name isn't found at a standard path.
-    runner = CodeRunner() 
-    
+    runner = CodeRunner()
+
     project_name_main = "test-project-runner"
-    
+
     # Ensure the project directory and test file exist
     config_main = Config()
-    project_dir_main = os.path.join(config_main.get_projects_dir(), project_name_main.lower().replace(" ", "-"))
+    project_dir_main = os.path.join(
+        config_main.get_projects_dir(), project_name_main.lower().replace(" ", "-")
+    )
     if not os.path.exists(project_dir_main):
         os.makedirs(project_dir_main, exist_ok=True)
         logger.info(f"Created test project directory: {project_dir_main}")
@@ -320,16 +371,18 @@ if __name__ == '__main__':
         logger.info(f"Created test file at {test_file_path}")
 
     execution_command_main = ["python3", "test.py"]
-    result_main = runner.execute_code(project_name_main, execution_command_main, timeout_seconds=10)
+    result_main = runner.execute_code(
+        project_name_main, execution_command_main, timeout_seconds=10
+    )
 
     logger.info("\n--- Main Execution Result ---")
     logger.info(f"Success: {result_main['success']}")
     logger.info(f"Return Code: {result_main['return_code']}")
     logger.info(f"Stdout:\n{result_main['stdout']}")
     logger.info(f"Stderr:\n{result_main['stderr']}")
-    if result_main['error_message']:
+    if result_main["error_message"]:
         logger.info(f"Error Message: {result_main['error_message']}")
-    
+
     # Example with a non-existent command (should result in error in stderr from shell inside Firejail)
     # result_error_command = runner.execute_code(project_name_main, ["nonexistentcommand123xyz"], timeout_seconds=5)
     # logger.info("\n--- Non-existent Command Execution Result ---")

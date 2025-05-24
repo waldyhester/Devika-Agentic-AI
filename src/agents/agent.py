@@ -6,39 +6,41 @@ all necessary components, including planners, researchers, coders, and other
 specialized agents. It manages the overall workflow, from understanding the user's
 initial prompt to generating code, documentation, and reports.
 """
-import json
-import time
-import platform
+
 import asyncio
-from typing import List, Dict, Any, Tuple, Optional
+import json
+import platform
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
 import tiktoken
 from tiktoken.core import Encoding
 
-from src.socket_instance import emit_agent
-from src.project import ProjectManager
-from src.state import AgentState, StateType
-from src.logger import Logger
 from src.bert.sentence import SentenceBert
-# from src.memory import KnowledgeBase # Not used currently
-from src.browser.search import BingSearch, GoogleSearch, DuckDuckGoSearch, BaseSearch
 from src.browser import Browser, start_interaction
-from src.filesystem import ReadCode
-from src.services import Netlify
-from src.documenter.pdf import PDF
 
-from .planner import Planner
-from .researcher import Researcher
-from .formatter import Formatter
-from .coder import Coder
+# from src.memory import KnowledgeBase # Not used currently
+from src.browser.search import BaseSearch, BingSearch, DuckDuckGoSearch, GoogleSearch
+from src.documenter.pdf import PDF
+from src.filesystem import ReadCode
+from src.logger import Logger
+from src.project import ProjectManager
+from src.services import Netlify
+from src.socket_instance import emit_agent
+from src.state import AgentState, StateType
+
 from .action import Action
-from .internal_monologue import InternalMonologue
 from .answer import Answer
-from .runner import Runner
-from .feature import Feature
-from .patcher import Patcher
-from .reporter import Reporter
+from .coder import Coder
 from .decision import Decision
+from .feature import Feature
+from .formatter import Formatter
+from .internal_monologue import InternalMonologue
+from .patcher import Patcher
+from .planner import Planner
+from .reporter import Reporter
+from .researcher import Researcher
+from .runner import Runner
 
 
 class Agent:
@@ -87,7 +89,9 @@ class Agent:
             raise ValueError("base_model is required")
 
         self.logger: Logger = Logger()
-        self.base_model: str = base_model # Store base_model for use in browser_interaction
+        self.base_model: str = (
+            base_model  # Store base_model for use in browser_interaction
+        )
 
         self.collected_context_keywords: List[str] = []
 
@@ -149,9 +153,7 @@ class Agent:
             return GoogleSearch()
         return DuckDuckGoSearch()
 
-    def search_queries(
-        self, queries: List[str], project_name: str
-    ) -> Dict[str, str]:
+    def search_queries(self, queries: List[str], project_name: str) -> Dict[str, str]:
         """
         Perform web searches for a list of queries and format the results.
 
@@ -202,12 +204,16 @@ class Agent:
                 emit_agent(
                     "screenshot",
                     {"data": raw_screenshot, "project_name": project_name},
-                    broadcast=False, # Assuming screenshot is specific to a session
+                    broadcast=False,  # Assuming screenshot is specific to a session
                 )
                 results[query_stripped] = self.formatter.execute(data, project_name)
-                self.logger.info(f"Successfully processed search results for: {query_stripped}")
+                self.logger.info(
+                    f"Successfully processed search results for: {query_stripped}"
+                )
             except Exception as e:
-                self.logger.error(f"Error processing query '{query_stripped}' with link {link}: {e}")
+                self.logger.error(
+                    f"Error processing query '{query_stripped}' with link {link}: {e}"
+                )
                 results[query_stripped] = f"Error processing search results: {e}"
 
             # knowledge_base.add_knowledge(tag=query_stripped, contents=results[query_stripped])
@@ -223,13 +229,13 @@ class Agent:
         Returns:
             List[str]: The updated list of collected context keywords.
         """
-        keywords: List[Tuple[str, float]] = SentenceBert(
-            sentence
-        ).extract_keywords()
+        keywords: List[Tuple[str, float]] = SentenceBert(sentence).extract_keywords()
         self.collected_context_keywords.extend([keyword[0] for keyword in keywords])
         return self.collected_context_keywords
 
-    def _handle_decision_function(self, function_name: str, args: Dict[str, Any], project_name: str) -> None:
+    def _handle_decision_function(
+        self, function_name: str, args: Dict[str, Any], project_name: str
+    ) -> None:
         """
         Handle the execution of a function determined by the Decision agent.
 
@@ -243,14 +249,23 @@ class Agent:
             if url:
                 # TODO: Implement git clone functionality
                 self.logger.info(f"Placeholder: Git clone URL: {url}")
-                self.project_manager.add_message_from_devika(project_name, f"Attempting to clone repository from {url} (not implemented yet).")
+                self.project_manager.add_message_from_devika(
+                    project_name,
+                    f"Attempting to clone repository from {url} (not implemented yet).",
+                )
             else:
-                self.project_manager.add_message_from_devika(project_name, "Git clone URL not provided.")
+                self.project_manager.add_message_from_devika(
+                    project_name, "Git clone URL not provided."
+                )
 
         elif function_name == "generate_pdf_document":
             user_prompt = args.get("user_prompt", "Default prompt for PDF generation.")
-            markdown = self.reporter.execute([user_prompt], "", project_name) # Assuming empty code markdown for this context
-            pdf_file_path = PDF().markdown_to_pdf(markdown, project_name) # Returns path
+            markdown = self.reporter.execute(
+                [user_prompt], "", project_name
+            )  # Assuming empty code markdown for this context
+            pdf_file_path = PDF().markdown_to_pdf(
+                markdown, project_name
+            )  # Returns path
             self.logger.info(f"Generated PDF document at: {pdf_file_path}")
 
             project_name_space_url = project_name.replace(" ", "%20")
@@ -259,16 +274,22 @@ class Agent:
             self.project_manager.add_message_from_devika(project_name, response_msg)
 
         elif function_name == "browser_interaction":
-            user_prompt = args.get("user_prompt", "Default prompt for browser interaction.")
+            user_prompt = args.get(
+                "user_prompt", "Default prompt for browser interaction."
+            )
             # Assuming start_interaction is an async function or handles its own loop
-            asyncio.run(start_interaction(self.base_model, user_prompt, project_name)) # Pass base_model
+            asyncio.run(
+                start_interaction(self.base_model, user_prompt, project_name)
+            )  # Pass base_model
 
         elif function_name == "coding_project":
             user_prompt = args.get("user_prompt", "Default prompt for coding project.")
             self._execute_coding_project_flow(user_prompt, project_name)
         else:
-            self.project_manager.add_message_from_devika(project_name, f"Function {function_name} is not recognized or implemented.")
-
+            self.project_manager.add_message_from_devika(
+                project_name,
+                f"Function {function_name} is not recognized or implemented.",
+            )
 
     def _execute_coding_project_flow(self, user_prompt: str, project_name: str) -> None:
         """
@@ -295,8 +316,9 @@ class Agent:
             project_name=project_name,
         )
         self.coder.save_code_to_project(code, project_name)
-        self.project_manager.add_message_from_devika(project_name, "I have finished coding the project based on the plan.")
-
+        self.project_manager.add_message_from_devika(
+            project_name, "I have finished coding the project based on the plan."
+        )
 
     def make_decision(self, prompt: str, project_name: str) -> None:
         """
@@ -324,7 +346,6 @@ class Agent:
             else:
                 self.logger.warning(f"No function specified in decision item: {item}")
 
-
     def subsequent_execute(self, prompt: str, project_name: str) -> None:
         """
         Handle subsequent interactions after the initial project setup and execution.
@@ -347,7 +368,9 @@ class Agent:
         agent_action_response, agent_action = self.action.execute(
             conversation, project_name
         )
-        self.project_manager.add_message_from_devika(project_name, agent_action_response)
+        self.project_manager.add_message_from_devika(
+            project_name, agent_action_response
+        )
         self.logger.info(f"Action decided: {agent_action}")
 
         if agent_action == "answer":
@@ -371,7 +394,9 @@ class Agent:
 
         elif agent_action == "deploy":
             deploy_metadata = Netlify().deploy(project_name)
-            deploy_url = deploy_metadata.get("deploy_url", "Deployment URL not available.")
+            deploy_url = deploy_metadata.get(
+                "deploy_url", "Deployment URL not available."
+            )
             response_data = {
                 "message": "Done! I deployed your project on Netlify.",
                 "deploy_url": deploy_url,
@@ -389,8 +414,9 @@ class Agent:
             )
             self.logger.info(f"Feature code generated:\n{code_generated}")
             self.feature.save_code_to_project(code_generated, project_name)
-            self.project_manager.add_message_from_devika(project_name, "I've added the new features to the project.")
-
+            self.project_manager.add_message_from_devika(
+                project_name, "I've added the new features to the project."
+            )
 
         elif agent_action == "bug":
             # Assuming 'prompt' here is the error message or bug description
@@ -404,8 +430,9 @@ class Agent:
             )
             self.logger.info(f"Patched code generated:\n{code_patched}")
             self.patcher.save_code_to_project(code_patched, project_name)
-            self.project_manager.add_message_from_devika(project_name, "I've attempted to fix the bug.")
-
+            self.project_manager.add_message_from_devika(
+                project_name, "I've attempted to fix the bug."
+            )
 
         elif agent_action == "report":
             markdown_report = self.reporter.execute(
@@ -420,9 +447,13 @@ class Agent:
             self.project_manager.add_message_from_devika(project_name, response_msg)
 
         self.agent_state.set_agent_active(project_name, False)
-        self.agent_state.set_agent_completed(project_name, True) # Mark as completed after each subsequent action for now
+        self.agent_state.set_agent_completed(
+            project_name, True
+        )  # Mark as completed after each subsequent action for now
 
-    def execute(self, prompt: str, project_name_from_user: Optional[str] = None) -> None:
+    def execute(
+        self, prompt: str, project_name_from_user: Optional[str] = None
+    ) -> None:
         """
         The main execution flow of the agent.
 
@@ -442,12 +473,15 @@ class Agent:
             # This path might need review: if project_name_from_user is None,
             # planner.execute gets None, which might not be intended.
             # Assuming planner can handle this or a default name is used.
-            temp_plan_for_name = self.planner.execute(prompt, None) # Temporary call to get project name
+            temp_plan_for_name = self.planner.execute(
+                prompt, None
+            )  # Temporary call to get project name
             temp_planner_response = self.planner.parse_response(temp_plan_for_name)
-            current_project_name = temp_planner_response.get("project", "new-project") # Fallback name
+            current_project_name = temp_planner_response.get(
+                "project", "new-project"
+            )  # Fallback name
             self.project_manager.create_project(current_project_name)
             self.project_manager.add_message_from_user(current_project_name, prompt)
-
 
         self.logger.info(f"Executing agent for project: {current_project_name}")
         self.agent_state.set_agent_active(current_project_name, True)
@@ -463,14 +497,16 @@ class Agent:
         # summary: str = planner_response.get("summary", "") # Not currently used
 
         self.project_manager.add_message_from_devika(current_project_name, reply)
-        if plans: # Only add plans if they exist
+        if plans:  # Only add plans if they exist
             self.project_manager.add_message_from_devika(
                 current_project_name, f"Here's my plan:\n{json.dumps(plans, indent=4)}"
             )
 
         if focus:
             self.update_contextual_keywords(focus)
-            self.logger.info(f"Updated context keywords: {self.collected_context_keywords}")
+            self.logger.info(
+                f"Updated context keywords: {self.collected_context_keywords}"
+            )
 
         internal_monologue_text: str = self.internal_monologue.execute(
             current_prompt=plan_str, project_name=current_project_name
@@ -499,27 +535,34 @@ class Agent:
                 "If I need anything, I will make sure to ask you.",
             )
             search_results = self.search_queries(queries, current_project_name)
-        elif not ask_user_query: # Only if no queries AND no ask_user
-             self.project_manager.add_message_from_devika(
+        elif not ask_user_query:  # Only if no queries AND no ask_user
+            self.project_manager.add_message_from_devika(
                 current_project_name, "I think I can proceed without searching the web."
             )
 
-
         user_feedback: str = "Nothing specific from the user at this phase."
         if ask_user_query:
-            self.project_manager.add_message_from_devika(current_project_name, ask_user_query)
+            self.project_manager.add_message_from_devika(
+                current_project_name, ask_user_query
+            )
             self.agent_state.set_agent_active(current_project_name, False)
             self.logger.info("Waiting for user feedback...")
             got_user_feedback = False
             while not got_user_feedback:
-                time.sleep(5) # Polling interval
+                time.sleep(5)  # Polling interval
                 latest_user_msg = self.project_manager.get_latest_message_from_user(
                     current_project_name
                 )
-                is_user_msg_new = self.project_manager.validate_last_message_is_from_user(
-                    current_project_name
+                is_user_msg_new = (
+                    self.project_manager.validate_last_message_is_from_user(
+                        current_project_name
+                    )
                 )
-                if latest_user_msg and is_user_msg_new and latest_user_msg["message"] != ask_user_query : # Ensure it's a new message
+                if (
+                    latest_user_msg
+                    and is_user_msg_new
+                    and latest_user_msg["message"] != ask_user_query
+                ):  # Ensure it's a new message
                     user_feedback = latest_user_msg["message"]
                     got_user_feedback = True
                     self.project_manager.add_message_from_devika(

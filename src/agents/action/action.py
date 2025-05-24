@@ -8,11 +8,12 @@ for the agent to convey to the user. It uses a Large Language Model (LLM) and
 a Jinja2 template that instructs the LLM to output a JSON object containing
 the action and the response.
 """
+
 import json
 import re
-from typing import List, Tuple, TypedDict, Optional
+from typing import Dict, List, Optional, Tuple, TypedDict
 
-from jinja2 import Environment, BaseLoader
+from jinja2 import BaseLoader, Environment
 
 from src.llm import LLM
 from src.logger import Logger
@@ -109,8 +110,9 @@ class Action:
         if match:
             json_string = match.group(1)
         else:
-            logger.info("No JSON code block found in action response, attempting to parse entire response.")
-
+            logger.info(
+                "No JSON code block found in action response, attempting to parse entire response."
+            )
 
         try:
             parsed_json: Dict = json.loads(json_string)
@@ -176,5 +178,7 @@ class Action:
             # For now, returning None signifies failure.
             return None
 
-        logger.info(f"Action determined: {parsed_data['action']}. Agent response: {parsed_data['response']}")
+        logger.info(
+            f"Action determined: {parsed_data['action']}. Agent response: {parsed_data['response']}"
+        )
         return parsed_data["response"], parsed_data["action"]

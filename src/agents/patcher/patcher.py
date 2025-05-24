@@ -6,18 +6,22 @@ when errors occur during execution. It uses a Large Language Model (LLM) and a
 Jinja2 template that instructs the LLM to output a JSON list of file objects,
 each containing a filename and its corresponding corrected code content.
 """
-import os
-import time
-import json
-import re
-from typing import List, Dict, TypedDict, Optional
 
-from jinja2 import Environment, BaseLoader
+import json
+import os
+import re
+import time
+from typing import Dict, List, Optional, TypedDict
+
+from jinja2 import BaseLoader, Environment
 
 from src.config import Config
 from src.llm import LLM
-from src.state import AgentState, StateType # Assuming StateType is defined in src.state
 from src.logger import Logger
+from src.state import (  # Assuming StateType is defined in src.state
+    AgentState,
+    StateType,
+)
 
 # Load the prompt template.
 try:
@@ -120,7 +124,7 @@ class Patcher:
         return template.render(
             conversation=conversation,
             code_markdown=code_markdown,
-            commands=commands or [], # Ensure commands is a list for the template
+            commands=commands or [],  # Ensure commands is a list for the template
             error=error,
             system_os=system_os,
         )
@@ -143,8 +147,9 @@ class Patcher:
         if match:
             json_string = match.group(1)
         else:
-            self.logger.info("No JSON code block found in patcher response, attempting to parse entire response.")
-
+            self.logger.info(
+                "No JSON code block found in patcher response, attempting to parse entire response."
+            )
 
         try:
             parsed_list: List[Dict[str, str]] = json.loads(json_string)
@@ -156,10 +161,18 @@ class Patcher:
 
             validated_list: PatcherResponseDict = []
             for item in parsed_list:
-                if isinstance(item, dict) and "file_name" in item and "code_content" in item and \
-                   isinstance(item["file_name"], str) and isinstance(item["code_content"], str):
+                if (
+                    isinstance(item, dict)
+                    and "file_name" in item
+                    and "code_content" in item
+                    and isinstance(item["file_name"], str)
+                    and isinstance(item["code_content"], str)
+                ):
                     validated_list.append(
-                        {"file_name": item["file_name"], "code_content": item["code_content"]}
+                        {
+                            "file_name": item["file_name"],
+                            "code_content": item["code_content"],
+                        }
                     )
                 else:
                     self.logger.error(
@@ -202,7 +215,9 @@ class Patcher:
             code_content = file_item["code_content"]
 
             if ".." in file_name or os.path.isabs(file_name):
-                self.logger.error(f"Invalid or insecure file path provided by patcher: {file_name}")
+                self.logger.error(
+                    f"Invalid or insecure file path provided by patcher: {file_name}"
+                )
                 continue
 
             full_file_path = os.path.join(project_path, file_name)
@@ -213,16 +228,18 @@ class Patcher:
                     os.makedirs(file_dir, exist_ok=True)
                 with open(full_file_path, "w", encoding="utf-8") as f:
                     f.write(code_content)
-                self.logger.info(f"Successfully saved patched code to: {full_file_path}")
+                self.logger.info(
+                    f"Successfully saved patched code to: {full_file_path}"
+                )
             except IOError as e:
                 self.logger.error(f"Error saving patched file {full_file_path}: {e}")
             except Exception as e:
-                self.logger.error(f"An unexpected error occurred while saving patched file {full_file_path}: {e}")
+                self.logger.error(
+                    f"An unexpected error occurred while saving patched file {full_file_path}: {e}"
+                )
         return project_path
 
-    def _create_markdown_from_code_set(
-        self, code_set: PatcherResponseDict
-    ) -> str:
+    def _create_markdown_from_code_set(self, code_set: PatcherResponseDict) -> str:
         """
         Convert a list of code file dictionaries to a Markdown string for logging/display.
 
@@ -234,7 +251,11 @@ class Patcher:
         """
         markdown_parts = []
         for file_item in code_set:
-            lang = file_item["file_name"].split(".")[-1] if "." in file_item["file_name"] else ""
+            lang = (
+                file_item["file_name"].split(".")[-1]
+                if "." in file_item["file_name"]
+                else ""
+            )
             markdown_parts.append(
                 f"File: `{file_item['file_name']}`:\n```{lang}\n{file_item['code_content']}\n```"
             )
@@ -255,17 +276,19 @@ class Patcher:
             file_name = file_item["file_name"]
             code_content = file_item["code_content"]
 
-            current_state: Optional[StateType] = agent_state_manager.get_latest_state(project_name)
+            current_state: Optional[StateType] = agent_state_manager.get_latest_state(
+                project_name
+            )
             new_state: StateType = agent_state_manager.new_state()
 
             if current_state and "browser_session" in current_state:
                 new_state["browser_session"] = current_state["browser_session"]
 
             new_state["internal_monologue"] = f"Applying patch to file: {file_name}..."
-            new_state["terminal_session"] = { # type: ignore
+            new_state["terminal_session"] = {  # type: ignore
                 "title": f"Patching {file_name}",
-                "command": f"vim {file_name}", # Emulated command
-                "output": code_content, # Shows the new content
+                "command": f"vim {file_name}",  # Emulated command
+                "output": code_content,  # Shows the new content
             }
             agent_state_manager.add_to_current_state(project_name, new_state)
             time.sleep(1)

@@ -6,18 +6,19 @@ files. It uses a Large Language Model (LLM) and a Jinja2 template that instructs
 the LLM to output a JSON list of file objects, each containing a filename and
 its corresponding code content.
 """
-import os
-import time
-import json
-import re
-from typing import List, Dict, TypedDict, Optional
 
-from jinja2 import Environment, BaseLoader
+import json
+import os
+import re
+import time
+from typing import Dict, List, Optional, TypedDict
+
+from jinja2 import BaseLoader, Environment
 
 from src.config import Config
 from src.llm import LLM
-from src.state import AgentState, StateType
 from src.logger import Logger
+from src.state import AgentState, StateType
 
 # Load the prompt template from the associated Jinja2 file.
 try:
@@ -107,7 +108,9 @@ class Coder:
             str: The fully rendered prompt string to be sent to the LLM.
         """
         if PROMPT_TEMPLATE == "Error: Coder prompt template not found.":
-            return f"Coder prompt template is missing. Plan: {step_by_step_plan[:200]}..."
+            return (
+                f"Coder prompt template is missing. Plan: {step_by_step_plan[:200]}..."
+            )
         env = Environment(loader=BaseLoader())
         template = env.from_string(PROMPT_TEMPLATE)
         return template.render(
@@ -133,8 +136,9 @@ class Coder:
         if match:
             json_string = match.group(1)
         else:
-            self.logger.info("No JSON code block found in coder response, attempting to parse entire response.")
-
+            self.logger.info(
+                "No JSON code block found in coder response, attempting to parse entire response."
+            )
 
         try:
             parsed_list: List[Dict[str, str]] = json.loads(json_string)
@@ -147,16 +151,26 @@ class Coder:
             # Validate structure of each item in the list
             validated_list: CoderResponseDict = []
             for item in parsed_list:
-                if isinstance(item, dict) and "file_name" in item and "code_content" in item and \
-                   isinstance(item["file_name"], str) and isinstance(item["code_content"], str):
+                if (
+                    isinstance(item, dict)
+                    and "file_name" in item
+                    and "code_content" in item
+                    and isinstance(item["file_name"], str)
+                    and isinstance(item["code_content"], str)
+                ):
                     validated_list.append(
-                        {"file_name": item["file_name"], "code_content": item["code_content"]}
+                        {
+                            "file_name": item["file_name"],
+                            "code_content": item["code_content"],
+                        }
                     )
                 else:
                     self.logger.error(
                         f"Invalid item structure in coder response list: {item}. Response: {json_string[:500]}..."
                     )
-                    return None  # Or skip invalid items, depending on desired strictness
+                    return (
+                        None  # Or skip invalid items, depending on desired strictness
+                    )
             return validated_list
         except json.JSONDecodeError as e:
             self.logger.error(
@@ -194,13 +208,15 @@ class Coder:
             # Ensure file_name is a relative path and secure
             if ".." in file_name or os.path.isabs(file_name):
                 self.logger.error(f"Invalid or insecure file path: {file_name}")
-                continue # Skip saving this file
+                continue  # Skip saving this file
 
             full_file_path = os.path.join(project_path, file_name)
             file_dir = os.path.dirname(full_file_path)
 
             try:
-                if file_dir: # Ensure directory exists only if file_dir is not empty (e.g. for root files)
+                if (
+                    file_dir
+                ):  # Ensure directory exists only if file_dir is not empty (e.g. for root files)
                     os.makedirs(file_dir, exist_ok=True)
                 with open(full_file_path, "w", encoding="utf-8") as f:
                     f.write(code_content)
@@ -209,14 +225,13 @@ class Coder:
                 self.logger.error(f"Error saving file {full_file_path}: {e}")
                 # Decide if one error should stop all, or continue. For now, continue.
             except Exception as e:
-                self.logger.error(f"An unexpected error occurred while saving {full_file_path}: {e}")
-
+                self.logger.error(
+                    f"An unexpected error occurred while saving {full_file_path}: {e}"
+                )
 
         return project_path
 
-    def _create_markdown_from_code_set(
-        self, code_set: CoderResponseDict
-    ) -> str:
+    def _create_markdown_from_code_set(self, code_set: CoderResponseDict) -> str:
         """
         Convert a list of code file dictionaries to a Markdown string.
         (Used for internal representation or logging, not for LLM response).
@@ -230,13 +245,16 @@ class Coder:
         markdown_parts = []
         for file_item in code_set:
             # Basic language detection from extension for markdown block
-            lang = file_item["file_name"].split(".")[-1] if "." in file_item["file_name"] else ""
+            lang = (
+                file_item["file_name"].split(".")[-1]
+                if "." in file_item["file_name"]
+                else ""
+            )
             markdown_parts.append(
                 f"File: `{file_item['file_name']}`:\n```{lang}\n{file_item['code_content']}\n```"
             )
         # The original prompt used "~~~" as delimiters, but standard markdown is ```
         return "\n\n".join(markdown_parts)
-
 
     def emulate_code_writing(
         self, code_set: CoderResponseDict, project_name: str
@@ -261,17 +279,19 @@ class Coder:
             )
             new_state: StateType = agent_state_manager.new_state()
 
-            if current_state and "browser_session" in current_state: # Preserve browser session
+            if (
+                current_state and "browser_session" in current_state
+            ):  # Preserve browser session
                 new_state["browser_session"] = current_state["browser_session"]
 
             new_state["internal_monologue"] = f"Writing code into file: {file_name}..."
-            new_state["terminal_session"] = { # type: ignore
+            new_state["terminal_session"] = {  # type: ignore
                 "title": f"Editing {file_name}",
-                "command": f"vim {file_name}", # Emulated command
+                "command": f"vim {file_name}",  # Emulated command
                 "output": code_content,
             }
             agent_state_manager.add_to_current_state(project_name, new_state)
-            time.sleep(1) # Short delay for UI update
+            time.sleep(1)  # Short delay for UI update
 
     def execute(
         self,
@@ -301,9 +321,7 @@ class Coder:
             self.logger.error("Cannot execute coder due to missing prompt template.")
             return None
 
-        rendered_prompt = self.render(
-            step_by_step_plan, user_context, search_results
-        )
+        rendered_prompt = self.render(step_by_step_plan, user_context, search_results)
         llm_response = self.llm.inference(rendered_prompt, project_name)
 
         parsed_code_files = self.parse_response(llm_response)
@@ -315,7 +333,9 @@ class Coder:
             # Consider a retry mechanism or returning an error state
             return None
 
-        self.logger.info(f"Successfully parsed {len(parsed_code_files)} file(s) from LLM response.")
+        self.logger.info(
+            f"Successfully parsed {len(parsed_code_files)} file(s) from LLM response."
+        )
         self.emulate_code_writing(parsed_code_files, project_name)
 
         return parsed_code_files

@@ -12,15 +12,16 @@ with this stored state, such as creating new states, adding to the state stack,
 retrieving current or latest states, and updating specific attributes like
 agent activity, completion status, and token usage.
 """
+
 import json
 from datetime import datetime
-from typing import Optional, Dict, Any, List, Union
+from typing import Dict, List, Optional, Union
 
 from sqlalchemy.future.engine import Engine
 from sqlmodel import Field, Session, SQLModel, create_engine
 
-from src.socket_instance import emit_agent
 from src.config import Config
+from src.socket_instance import emit_agent
 
 # Define a type alias for the structured state dictionary.
 # This helps in documenting and type-checking the state objects.
@@ -206,7 +207,7 @@ class AgentState:
                 state_stack = json.loads(agent_state_record.state_stack_json)
                 if state_stack:  # Ensure stack is not empty
                     state_stack[-1] = state
-                else: # Should not happen if record exists, but handle defensively
+                else:  # Should not happen if record exists, but handle defensively
                     state_stack = [state]
                 agent_state_record.state_stack_json = json.dumps(state_stack)
                 session.commit()
@@ -264,7 +265,7 @@ class AgentState:
                 state_stack = json.loads(agent_state_record.state_stack_json)
                 if state_stack:
                     state_stack[-1]["agent_is_active"] = is_active
-                else: # Should not happen if record exists
+                else:  # Should not happen if record exists
                     new_s = self.new_state()
                     new_s["agent_is_active"] = is_active
                     state_stack = [new_s]
@@ -316,9 +317,11 @@ class AgentState:
             if agent_state_record:
                 state_stack = json.loads(agent_state_record.state_stack_json)
                 if state_stack:
-                    state_stack[-1]["internal_monologue"] = "Agent has completed the task."
+                    state_stack[-1][
+                        "internal_monologue"
+                    ] = "Agent has completed the task."
                     state_stack[-1]["completed"] = is_completed
-                else: # Should not happen
+                else:  # Should not happen
                     new_s = self.new_state()
                     new_s["internal_monologue"] = "Agent has completed the task."
                     new_s["completed"] = is_completed
@@ -373,11 +376,11 @@ class AgentState:
                 state_stack = json.loads(agent_state_record.state_stack_json)
                 if state_stack:
                     current_tokens = state_stack[-1].get("token_usage", 0)
-                    if isinstance(current_tokens, int): # Should always be int
+                    if isinstance(current_tokens, int):  # Should always be int
                         state_stack[-1]["token_usage"] = current_tokens + token_usage
-                    else: # Fallback if somehow not an int
+                    else:  # Fallback if somehow not an int
                         state_stack[-1]["token_usage"] = token_usage
-                else: # Should not happen
+                else:  # Should not happen
                     new_s = self.new_state()
                     new_s["token_usage"] = token_usage
                     state_stack = [new_s]

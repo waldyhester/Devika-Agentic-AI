@@ -6,11 +6,12 @@ a direct and informative answer to a user's question. It uses a Large Language
 Model (LLM) and a Jinja2 template, expecting the LLM to return a JSON object
 containing the answer string.
 """
+
 import json
 import re
-from typing import List, TypedDict, Optional
+from typing import List, Optional, TypedDict
 
-from jinja2 import Environment, BaseLoader
+from jinja2 import BaseLoader, Environment
 
 from src.llm import LLM
 from src.logger import Logger
@@ -103,8 +104,9 @@ class Answer:
         if match:
             json_string = match.group(1)
         else:
-            logger.info("No JSON code block found in answer response, attempting to parse entire response.")
-
+            logger.info(
+                "No JSON code block found in answer response, attempting to parse entire response."
+            )
 
         try:
             parsed_json: AnswerResponseDict = json.loads(json_string)
@@ -164,7 +166,7 @@ class Answer:
 
         if not parsed_data:
             logger.error("Failed to get a valid structured answer from LLM.")
-            return None # Caller can decide how to handle this.
+            return None  # Caller can decide how to handle this.
 
         logger.info(f"Generated Answer: {parsed_data['response']}")
         return parsed_data["response"]

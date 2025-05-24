@@ -9,21 +9,22 @@ Global instances for Ollama, Logger, and AgentState are initialized at the modul
 level for use by the LLM class and its methods.
 """
 
+from typing import Dict, List, Optional, Tuple
+
 import tiktoken
-from typing import List, Tuple, Dict, Optional
 
-from src.socket_instance import emit_agent
-from .ollama_client import Ollama
-from .claude_client import Claude
-from .openai_client import OpenAi
-from .gemini_client import Gemini
-from .mistral_client import MistralAi
-from .groq_client import Groq
-from .base_client import BaseClient
-
-from src.state import AgentState
 from src.config import Config
 from src.logger import Logger
+from src.socket_instance import emit_agent
+from src.state import AgentState
+
+from .base_client import BaseClient
+from .claude_client import Claude
+from .gemini_client import Gemini
+from .groq_client import Groq
+from .mistral_client import MistralAi
+from .ollama_client import Ollama
+from .openai_client import OpenAi
 
 # Initialize Tiktoken encoding for token counting
 TIKTOKEN_ENC = tiktoken.get_encoding("cl100k_base")

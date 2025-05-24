@@ -6,9 +6,11 @@ model to extract keywords and keyphrases from a given sentence or text.
 It allows customization of extraction parameters like n-gram range, stop words,
 and diversity.
 """
-from typing import List, Tuple, Optional
 
-from keybert import KeyBERT as KeyBERTModel # Renamed for clarity to avoid conflict
+from typing import List, Optional, Tuple, Union
+
+from keybert import KeyBERT as KeyBERTModel  # Renamed for clarity to avoid conflict
+
 from src.logger import Logger
 
 logger = Logger()
@@ -43,20 +45,21 @@ class SentenceBert:
                 self.kw_model: KeyBERTModel = KeyBERTModel(model=model_name)
             else:
                 self.kw_model: KeyBERTModel = KeyBERTModel()
-            logger.info(f"KeyBERT model initialized (model: {model_name or 'default'}).")
+            logger.info(
+                f"KeyBERT model initialized (model: {model_name or 'default'})."
+            )
         except Exception as e:
             logger.error(f"Failed to initialize KeyBERT model: {e}")
             # Fallback to a default model or raise an error if critical
             # For now, it might still work if KeyBERT() without args has a fallback
-            self.kw_model = KeyBERTModel() # Attempt default initialization
+            self.kw_model = KeyBERTModel()  # Attempt default initialization
             logger.warning("Attempting KeyBERT default initialization after error.")
-
 
     def extract_keywords(
         self,
         top_n: int = 5,
         keyphrase_ngram_range: Tuple[int, int] = (1, 1),
-        stop_words: Optional[Union[str, List[str]]] = "english", # type: ignore
+        stop_words: Optional[Union[str, List[str]]] = "english",  # type: ignore
         use_mmr: bool = True,
         diversity: float = 0.7,
     ) -> List[Tuple[str, float]]:
@@ -92,12 +95,12 @@ class SentenceBert:
         if not hasattr(self, "kw_model"):
             logger.error("KeyBERT model not initialized. Cannot extract keywords.")
             return []
-            
+
         try:
             keywords: List[Tuple[str, float]] = self.kw_model.extract_keywords(
                 self.sentence,
                 keyphrase_ngram_range=keyphrase_ngram_range,
-                stop_words=stop_words, # type: ignore
+                stop_words=stop_words,  # type: ignore
                 top_n=top_n,
                 use_mmr=use_mmr,
                 diversity=diversity,

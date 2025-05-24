@@ -6,10 +6,11 @@ typically extracted from web pages or other sources, and transforming it into a
 cleaner, more readable Markdown format. It uses a Large Language Model (LLM)
 and a Jinja2 template to guide the formatting process.
 """
+
 import re
 from typing import Optional
 
-from jinja2 import Environment, BaseLoader
+from jinja2 import BaseLoader, Environment
 
 from src.llm import LLM
 from src.logger import Logger
@@ -61,7 +62,7 @@ class Formatter:
             str: The fully rendered prompt string to be sent to the LLM.
         """
         if PROMPT_TEMPLATE == "Error: Formatter prompt template not found.":
-            return f"Formatter prompt template is missing. Raw text: {raw_text[:200]}..." # Log snippet
+            return f"Formatter prompt template is missing. Raw text: {raw_text[:200]}..."  # Log snippet
         env = Environment(loader=BaseLoader())
         template = env.from_string(PROMPT_TEMPLATE)
         return template.render(raw_text=raw_text)
@@ -86,7 +87,8 @@ class Formatter:
 
         # Check if the response is enclosed in ```markdown ... ``` or just ``` ... ```
         if not (
-            response.strip().startswith("```markdown") or response.strip().startswith("```")
+            response.strip().startswith("```markdown")
+            or response.strip().startswith("```")
         ) or not response.strip().endswith("```"):
             logger.warning(
                 "Formatter response validation failed: Response not enclosed in markdown code blocks."
@@ -137,14 +139,16 @@ class Formatter:
         rendered_prompt = self.render(raw_text)
         if "Formatter prompt template is missing" in rendered_prompt:
             logger.error("Cannot execute formatter due to missing prompt template.")
-            return raw_text # Fallback to raw_text
+            return raw_text  # Fallback to raw_text
 
-        llm_response = self.llm.inference(rendered_prompt, project_name or "formatter_task")
+        llm_response = self.llm.inference(
+            rendered_prompt, project_name or "formatter_task"
+        )
 
         if not self.validate_response(llm_response):
             logger.warning(
                 "LLM response failed validation for formatter. Returning raw text as fallback."
             )
-            return raw_text # Fallback to raw_text
+            return raw_text  # Fallback to raw_text
 
         return self.parse_response(llm_response)

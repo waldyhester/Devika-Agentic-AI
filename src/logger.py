@@ -6,13 +6,16 @@ standard Python logger instance. It sets up handlers for console and file loggin
 with configurable log levels and formats. It also includes a decorator
 `route_logger` for logging Flask route access.
 """
+
 import logging
 import os
 from functools import wraps
-from typing import Any, Callable
+from typing import Any, Callable, Dict, Optional
 
-from flask import request # Assuming Flask is used for route_logger
-from werkzeug.wrappers import Response as WerkzeugResponse # For type checking in route_logger
+from flask import request  # Assuming Flask is used for route_logger
+from werkzeug.wrappers import (
+    Response as WerkzeugResponse,
+)  # For type checking in route_logger
 
 from src.config import Config
 
@@ -20,7 +23,7 @@ from src.config import Config
 DEFAULT_LOGGER_NAME = "devika"
 DEFAULT_LOG_FILENAME = "devika_agent.log"
 DEFAULT_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-DEFAULT_LOG_LEVEL = "INFO" # Default level if not set in config
+DEFAULT_LOG_LEVEL = "INFO"  # Default level if not set in config
 
 # Cache for configured loggers to prevent duplicate handler setup
 _configured_loggers: Dict[str, logging.Logger] = {}
@@ -61,21 +64,27 @@ class Logger:
 
         # Configure logger only if it hasn't been configured by this class before
         if logger_name not in _configured_loggers:
-            log_level_str: str = config.get_log_level() or DEFAULT_LOG_LEVEL # Assuming get_log_level in Config
-            numeric_log_level: int = getattr(logging, log_level_str.upper(), logging.INFO)
+            log_level_str: str = (
+                config.get_log_level() or DEFAULT_LOG_LEVEL
+            )  # Assuming get_log_level in Config
+            numeric_log_level: int = getattr(
+                logging, log_level_str.upper(), logging.INFO
+            )
             self.logger.setLevel(numeric_log_level)
 
             # Create formatter
             formatter = logging.Formatter(DEFAULT_LOG_FORMAT)
 
             # Console Handler
-            if config.get_console_logging_enabled(): # Assuming this config option exists
+            if (
+                config.get_console_logging_enabled()
+            ):  # Assuming this config option exists
                 console_handler = logging.StreamHandler()
                 console_handler.setFormatter(formatter)
                 self.logger.addHandler(console_handler)
 
             # File Handler
-            if config.get_file_logging_enabled(): # Assuming this config option exists
+            if config.get_file_logging_enabled():  # Assuming this config option exists
                 logs_dir: str = config.get_logs_dir()
                 os.makedirs(logs_dir, exist_ok=True)
                 self.log_file_path: str = os.path.join(logs_dir, filename)
@@ -84,10 +93,12 @@ class Logger:
                 file_handler.setFormatter(formatter)
                 self.logger.addHandler(file_handler)
             else:
-                self.log_file_path = "" # No file path if file logging is disabled
+                self.log_file_path = ""  # No file path if file logging is disabled
 
             _configured_loggers[logger_name] = self.logger
-            self.logger.info(f"Logger '{logger_name}' configured. Level: {log_level_str}.")
+            self.logger.info(
+                f"Logger '{logger_name}' configured. Level: {log_level_str}."
+            )
         else:
             # If already configured, retrieve the path from one of its file handlers
             self.log_file_path = ""
@@ -96,7 +107,6 @@ class Logger:
                     self.log_file_path = handler.baseFilename
                     break
             self.logger.debug(f"Logger '{logger_name}' already configured.")
-
 
     def read_log_file(self) -> Optional[str]:
         """
@@ -107,7 +117,9 @@ class Logger:
                            is disabled, the file doesn't exist, or an error occurs.
         """
         if not self.log_file_path:
-            self.logger.warning("File logging is not enabled or file path not set; cannot read log file.")
+            self.logger.warning(
+                "File logging is not enabled or file path not set; cannot read log file."
+            )
             return None
         try:
             with open(self.log_file_path, "r", encoding="utf-8") as file:
@@ -174,11 +186,12 @@ def route_logger(logger_instance: Logger) -> Callable:
                     logger_instance.debug(
                         f"Request: {request.method} {request.path} - "
                         f"Headers: {dict(request.headers)} - "
-                        f"Body: {request.get_data(as_text=True)[:200]}..." # Log first 200 chars of body
+                        f"Body: {request.get_data(as_text=True)[:200]}..."  # Log first 200 chars of body
                     )
                 except Exception as e:
-                    logger_instance.exception(f"Error logging request details for {request.path}: {e}")
-
+                    logger_instance.exception(
+                        f"Error logging request details for {request.path}: {e}"
+                    )
 
             # Call the actual route function
             response = func(*args, **kwargs)
@@ -186,29 +199,40 @@ def route_logger(logger_instance: Logger) -> Callable:
             if log_enabled:
                 # Log exit point, including response summary if possible
                 try:
-                    if isinstance(response, WerkzeugResponse) and response.direct_passthrough:
+                    if (
+                        isinstance(response, WerkzeugResponse)
+                        and response.direct_passthrough
+                    ):
                         logger_instance.debug(
                             f"Response: {request.method} {request.path} - Status: {response.status_code} - Type: File response"
                         )
-                    elif isinstance(response, tuple) and isinstance(response[0], WerkzeugResponse): # Handle (response, status_code)
+                    elif isinstance(response, tuple) and isinstance(
+                        response[0], WerkzeugResponse
+                    ):  # Handle (response, status_code)
                         res_obj = response[0]
-                        response_summary = res_obj.get_data(as_text=True)[:200] # Log first 200 chars
+                        response_summary = res_obj.get_data(as_text=True)[
+                            :200
+                        ]  # Log first 200 chars
                         logger_instance.debug(
                             f"Response: {request.method} {request.path} - Status: {res_obj.status_code} - Body: {response_summary}..."
                         )
                     elif isinstance(response, WerkzeugResponse):
-                        response_summary = response.get_data(as_text=True)[:200] # Log first 200 chars
+                        response_summary = response.get_data(as_text=True)[
+                            :200
+                        ]  # Log first 200 chars
                         logger_instance.debug(
                             f"Response: {request.method} {request.path} - Status: {response.status_code} - Body: {response_summary}..."
                         )
-                    else: # For non-Response objects, e.g. direct string or dict returns from Flask routes
+                    else:  # For non-Response objects, e.g. direct string or dict returns from Flask routes
                         logger_instance.debug(
-                             f"Response: {request.method} {request.path} - Body: {str(response)[:200]}..."
+                            f"Response: {request.method} {request.path} - Body: {str(response)[:200]}..."
                         )
                 except Exception as e:
                     logger_instance.exception(
                         f"Error logging response details for {request.path}: {e}"
                     )
             return response
+
         return wrapper
+
     return decorator

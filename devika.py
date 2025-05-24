@@ -13,22 +13,22 @@ from src.init import init_devika
 init_devika()
 
 
-from flask import Flask, request, jsonify, send_file
-from flask_cors import CORS
-from src.socket_instance import socketio, emit_agent
-import os
 import logging
+import os
 from threading import Thread
-import tiktoken
 
+import tiktoken
+from flask import Flask, jsonify, request, send_file
+from flask_cors import CORS
+
+from src.agents import Agent
 from src.apis.project import project_bp
 from src.config import Config
+from src.llm import LLM
 from src.logger import Logger, route_logger
 from src.project import ProjectManager
+from src.socket_instance import emit_agent, socketio
 from src.state import AgentState
-from src.agents import Agent
-from src.llm import LLM
-
 
 app = Flask(__name__)
 CORS(app)
@@ -53,7 +53,7 @@ logger = Logger()
 # initial socket
 @socketio.on("socket_connect")
 def test_connect(data):
-    print("Socket connected :: ", data)
+    logger.info(f"Socket connected :: {data}")
     emit_agent("socket_response", {"data": "Server Connected"})
 
 
@@ -157,8 +157,8 @@ def get_terminal_session():
 @route_logger(logger)
 def run_code():
     data = request.json
-    project_name = data.get("project_name")
-    code = data.get("code")
+    data.get("project_name")
+    data.get("code")
     # TODO: Implement code execution logic
     return jsonify({"message": "Code execution started"})
 
@@ -190,7 +190,7 @@ def real_time_logs():
 @route_logger(logger)
 def set_settings():
     data = request.json
-    print("Data: ", data)
+    logger.debug(f"Received settings data: {data}")
     config.config.update(data)
     config.save_config()
     return jsonify({"message": "Settings updated"})

@@ -2,6 +2,9 @@ from mistralai.client import MistralClient
 from mistralai.models.chat_completion import ChatMessage
 
 from src.config import Config
+from src.logger import Logger
+
+log = Logger(__name__)
 
 
 class MistralAi:
@@ -11,7 +14,7 @@ class MistralAi:
         self.client = MistralClient(api_key=api_key)
 
     def inference(self, model_id: str, prompt: str) -> str:
-        print("prompt", prompt.strip())
+        log.debug(f"MistralAI Prompt for model {model_id}: {prompt.strip()}")
         chat_completion = self.client.chat(
             model=model_id, messages=[ChatMessage(role="user", content=prompt.strip())]
         )

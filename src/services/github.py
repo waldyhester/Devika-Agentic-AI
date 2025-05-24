@@ -6,21 +6,22 @@ listing user repositories by making authenticated requests to the GitHub API.
 It uses the `requests` library for HTTP communication and handles API responses,
 including pagination and error conditions.
 """
-import os
-from typing import List, Optional, TypedDict, Dict, Any
+
+from typing import List, Optional, TypedDict
 
 import requests
-from requests.exceptions import RequestException, HTTPError
+from requests.exceptions import HTTPError, RequestException
 
 from src.config import Config
 from src.logger import Logger
 
 logger = Logger()
+config = Config()  # Module-level Config instance
 
-GITHUB_API_BASE_URL = "https://api.github.com"
-DEFAULT_USER_AGENT = "DevikaAI/0.1" # Recommended by GitHub
-DEFAULT_TIMEOUT = 10  # seconds
-DEFAULT_PER_PAGE = 30 # Default items per page for paginated requests
+GITHUB_API_BASE_URL = config.get_github_api_base_url()
+DEFAULT_USER_AGENT = config.get_github_default_user_agent()
+DEFAULT_TIMEOUT = config.get_github_default_timeout()
+DEFAULT_PER_PAGE = config.get_github_default_per_page()
 
 
 class RepositoryDict(TypedDict, total=False):
@@ -38,6 +39,7 @@ class RepositoryDict(TypedDict, total=False):
         url (str): The API URL for the repository.
         # Add other relevant fields as needed
     """
+
     id: int
     name: str
     full_name: str
@@ -68,9 +70,11 @@ class GitHubService:
             token (Optional[str]): A GitHub Personal Access Token. If not provided,
                                    it attempts to fetch one from the application config.
         """
-        config = Config()
-        self.token: Optional[str] = token or config.get_github_api_key() # Assuming a new config method
-        
+        # config = Config() # Removed, use module-level instance
+        self.token: Optional[str] = (
+            token or config.get_github_api_key()
+        )
+
         self.session = requests.Session()
         self.session.headers["User-Agent"] = DEFAULT_USER_AGENT
         self.session.headers["Accept"] = "application/vnd.github.v3+json"
@@ -98,11 +102,12 @@ class GitHubService:
             try:
                 # Convert Unix timestamp to human-readable format
                 from datetime import datetime
+
                 reset_time = datetime.fromtimestamp(int(reset_timestamp))
                 reset_time_str = reset_time.isoformat()
-            except ValueError: # pragma: no cover
-                pass # If timestamp is invalid, just log the raw value
-            
+            except ValueError:  # pragma: no cover
+                pass  # If timestamp is invalid, just log the raw value
+
             logger.debug(
                 f"GitHub API Rate Limit: {remaining}/{limit} requests remaining. "
                 f"Resets at: {reset_time_str or reset_timestamp}."
@@ -132,41 +137,52 @@ class GitHubService:
         all_repos: List[RepositoryDict] = []
         page = 1
         url = f"{GITHUB_API_BASE_URL}/user/repos"
-        
+
         while True:
             params = {"per_page": per_page, "page": page, "sort": "updated"}
-            logger.debug(f"Fetching repositories page {page} with {per_page} items per page.")
-            
+            logger.debug(
+                f"Fetching repositories page {page} with {per_page} items per page."
+            )
+
             try:
                 response = self.session.get(url, params=params, timeout=DEFAULT_TIMEOUT)
                 self._log_rate_limit_info(response)
                 response.raise_for_status()  # Raises HTTPError for bad responses
-                
+
                 current_page_repos = response.json()
                 if not isinstance(current_page_repos, list):
-                    logger.error(f"Unexpected response format from GitHub API: {current_page_repos}")
-                    break 
-                
-                all_repos.extend(current_page_repos) # type: ignore
+                    logger.error(
+                        f"Unexpected response format from GitHub API: {current_page_repos}"
+                    )
+                    break
+
+                all_repos.extend(current_page_repos)  # type: ignore
 
                 # Check for next page using 'Link' header
-                if 'next' not in response.links or (max_pages and page >= max_pages):
-                    break 
+                if "next" not in response.links or (max_pages and page >= max_pages):
+                    break
                 page += 1
                 # Some APIs might return the next page URL directly in response.links['next']['url']
                 # but /user/repos uses simple page increment.
 
             except HTTPError as e:
-                logger.error(f"HTTP error fetching repositories (page {page}): {e.response.status_code} - {e.response.text}")
-                return None # Or return partial results: all_repos
+                logger.error(
+                    f"HTTP error fetching repositories (page {page}): {e.response.status_code} - {e.response.text}"
+                )
+                return None  # Or return partial results: all_repos
             except RequestException as e:
                 logger.error(f"Request error fetching repositories (page {page}): {e}")
-                return None # Or return partial results: all_repos
-            except ValueError as e: # JSONDecodeError inherits from ValueError
-                logger.error(f"Error decoding JSON response for repositories (page {page}): {e}")
-                return None # Or return partial results: all_repos
+                return None  # Or return partial results: all_repos
+            except ValueError as e:  # JSONDecodeError inherits from ValueError
+                logger.error(
+                    f"Error decoding JSON response for repositories (page {page}): {e}"
+                )
+                return None  # Or return partial results: all_repos
             except Exception as e:
-                logger.error(f"An unexpected error occurred while fetching repositories (page {page}): {e}", exc_info=True)
+                logger.error(
+                    f"An unexpected error occurred while fetching repositories (page {page}): {e}",
+                    exc_info=True,
+                )
                 return None
 
         logger.info(f"Successfully fetched {len(all_repos)} repositories.")

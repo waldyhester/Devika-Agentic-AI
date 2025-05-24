@@ -6,11 +6,12 @@ prompt and generating a structured, step-by-step plan for the AI to follow.
 It uses a Large Language Model (LLM) and a Jinja2 template to formulate the plan.
 The plan is expected to be in JSON format as specified by the prompt.
 """
+
 import json
 import re
-from typing import List, Dict, TypedDict, Optional, Union
+from typing import List, Optional, TypedDict, Union
 
-from jinja2 import Environment, BaseLoader
+from jinja2 import BaseLoader, Environment
 
 from src.llm import LLM
 from src.logger import Logger
@@ -126,7 +127,9 @@ class Planner:
             json.loads(json_string)
             return True
         except json.JSONDecodeError:
-            logger.warning(f"Planner response validation failed: Not valid JSON. Response: {response[:500]}...") # Log first 500 chars
+            logger.warning(
+                f"Planner response validation failed: Not valid JSON. Response: {response[:500]}..."
+            )  # Log first 500 chars
             return False
 
     def parse_response(self, response: str) -> Optional[PlannerResponseDict]:
@@ -158,8 +161,9 @@ class Planner:
             # This might be risky if the LLM adds explanations outside the JSON
             # For now, we'll try parsing the whole string if no block is found.
             # A more robust solution might involve cleaning up common LLM preambles/postambles.
-            logger.info("No JSON code block found in planner response, attempting to parse entire response.")
-
+            logger.info(
+                "No JSON code block found in planner response, attempting to parse entire response."
+            )
 
         try:
             parsed_json: PlannerResponseDict = json.loads(json_string)
@@ -177,7 +181,9 @@ class Planner:
                 return None
             return parsed_json
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse planner response JSON: {e}. Response: {json_string[:500]}...")
+            logger.error(
+                f"Failed to parse planner response JSON: {e}. Response: {json_string[:500]}..."
+            )
             return None
 
     def execute(
@@ -200,14 +206,18 @@ class Planner:
         """
         rendered_prompt = self.render(prompt)
         if "Planner prompt template is missing" in rendered_prompt:
-             logger.error("Cannot execute planner due to missing prompt template.")
-             return None
+            logger.error("Cannot execute planner due to missing prompt template.")
+            return None
 
-        llm_response = self.llm.inference(rendered_prompt, project_name or "planner_task")
+        llm_response = self.llm.inference(
+            rendered_prompt, project_name or "planner_task"
+        )
 
         if not self.validate_response(llm_response):
             # Attempt to re-run or handle error, for now, just log and return None
-            logger.error("LLM response failed validation. Cannot proceed with planning.")
+            logger.error(
+                "LLM response failed validation. Cannot proceed with planning."
+            )
             # You could try a retry mechanism here or a fallback.
             return None
 

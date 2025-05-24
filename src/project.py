@@ -7,17 +7,18 @@ histories associated with projects, and packaging project files into ZIP archive
 It uses SQLModel for database interactions to persist project metadata and message
 stacks.
 """
-import os
+
 import json
+import os
 import zipfile
 from datetime import datetime
-from typing import Optional, List, Dict, TypedDict, Any
+from typing import List, Optional, TypedDict
 
 from sqlalchemy.future.engine import Engine
 from sqlmodel import Field, Session, SQLModel, create_engine
 
-from src.socket_instance import emit_agent
 from src.config import Config
+from src.socket_instance import emit_agent
 
 
 class MessageDict(TypedDict):
@@ -87,9 +88,7 @@ class ProjectManager:
             MessageDict: A new message dictionary.
         """
         timestamp: str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        return MessageDict(
-            from_devika=True, message=None, timestamp=timestamp
-        )
+        return MessageDict(from_devika=True, message=None, timestamp=timestamp)
 
     def create_project(self, project: str) -> None:
         """
@@ -328,7 +327,9 @@ class ProjectManager:
                     # e.g., if project_fs_path is /data/projects/my-proj
                     # and file_path is /data/projects/my-proj/src/main.py
                     # arcname will be my-proj/src/main.py
-                    arcname = os.path.relpath(file_path, os.path.dirname(project_fs_path))
+                    arcname = os.path.relpath(
+                        file_path, os.path.dirname(project_fs_path)
+                    )
                     zipf.write(file_path, arcname=arcname)
         return zip_path
 

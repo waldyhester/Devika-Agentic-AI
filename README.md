@@ -153,6 +153,32 @@ To start using Devika, follow these steps:
 
 Devika requires certain configuration settings and API keys to function properly:
 
+### Environment Variables (.env)
+
+In addition to the `config.toml` file, Devika can be configured using environment variables defined in a `.env` file located in the root of the project. This method is useful for settings that might change between environments or for sensitive credentials (though API keys are typically managed via the UI and `config.toml`).
+
+To get started:
+1. Copy the `.env.example` file to a new file named `.env`:
+   ```bash
+   cp .env.example .env
+   ```
+2. Edit the `.env` file to set your desired values.
+
+Some of the parameters that can be configured via `.env` include:
+- `GITHUB_API_BASE_URL`
+- `GITHUB_DEFAULT_USER_AGENT`
+- `GITHUB_DEFAULT_TIMEOUT`
+- `GITHUB_DEFAULT_PER_PAGE`
+- `GIT_EXECUTABLE_PATH`
+- `GIT_DEFAULT_TIMEOUT`
+- `FIREJAIL_EXECUTABLE_PATH`
+- `FIREJAIL_DEFAULT_PROFILE_PATH`
+- `BROWSER_DEFAULT_USER_AGENT`
+
+The application will load variables from the `.env` file at startup. For the newly added settings, values from environment variables will be used, with sensible defaults hardcoded in the application if an environment variable is not set.
+
+### TOML Configuration (config.toml)
+
 when you first time run Devika, it will create a `config.toml` file for you in the root directory. You can configure the following settings in the settings page via UI:
 
 - STORAGE

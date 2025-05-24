@@ -8,8 +8,10 @@ various configuration parameters.
 """
 
 import os
-import toml
 from typing import Any, Dict, Optional
+
+import toml
+from dotenv import load_dotenv
 
 
 class Config:
@@ -53,6 +55,7 @@ class Config:
             ) as f_out:
                 f_out.write(f_in.read())
 
+        load_dotenv()  # Load environment variables from .env file
         self.config = toml.load("config.toml")
 
     def get_config(self) -> Dict[str, Any]:
@@ -243,6 +246,35 @@ class Config:
             bool: True if prompt logging is enabled, False otherwise.
         """
         return self.config["LOGGING"]["LOG_PROMPTS"] == "true"
+
+    # New getters for environment-configurable service parameters
+    def get_github_api_base_url(self) -> str:
+        return os.getenv("GITHUB_API_BASE_URL", "https://api.github.com")
+
+    def get_github_default_user_agent(self) -> str:
+        return os.getenv("GITHUB_DEFAULT_USER_AGENT", "DevikaAI/0.1")
+
+    def get_github_default_timeout(self) -> int:
+        return int(os.getenv("GITHUB_DEFAULT_TIMEOUT", "10"))
+
+    def get_github_default_per_page(self) -> int:
+        return int(os.getenv("GITHUB_DEFAULT_PER_PAGE", "30"))
+
+    def get_git_executable_path(self) -> str:
+        return os.getenv("GIT_EXECUTABLE_PATH", "git")
+
+    def get_git_default_timeout(self) -> int:
+        return int(os.getenv("GIT_DEFAULT_TIMEOUT", "300"))
+
+    def get_firejail_executable_path(self) -> str:
+        return os.getenv("FIREJAIL_EXECUTABLE_PATH", "firejail")
+
+    def get_firejail_default_profile_path(self) -> Optional[str]:
+        profile_path = os.getenv("FIREJAIL_DEFAULT_PROFILE_PATH")
+        return profile_path if profile_path else None
+
+    def get_browser_default_user_agent(self) -> str:
+        return os.getenv("BROWSER_DEFAULT_USER_AGENT", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
 
     def set_bing_api_key(self, key: str) -> None:
         """

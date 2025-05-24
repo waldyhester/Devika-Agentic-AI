@@ -6,25 +6,25 @@ operations such as launching a browser instance, navigating to URLs,
 taking screenshots, extracting page content (HTML, Markdown, PDF, text),
 and managing the Playwright lifecycle. It is designed to be used asynchronously.
 """
+
 import base64
 import os
-from typing import Optional, Tuple, Dict, Any
+from typing import Dict, Optional, Tuple
 
-from playwright.async_api import (
-    async_playwright,
-    TimeoutError as PlaywrightTimeoutError,
-    Error as PlaywrightError,
-    Playwright,
-    Browser as PlaywrightBrowser,
-    Page,
-)
 from markdownify import markdownify as md
 from pdfminer.high_level import extract_text
+from playwright.async_api import Browser as PlaywrightBrowser
+from playwright.async_api import Error as PlaywrightError
+from playwright.async_api import Page, Playwright
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import async_playwright
 
 from src.config import Config
-from src.state import AgentState, StateType
 from src.logger import Logger
-from src.socket_instance import emit_agent # Assuming this is used for agent communication
+from src.socket_instance import (
+    emit_agent,
+)  # Assuming this is used for agent communication
+from src.state import AgentState, StateType
 
 logger = Logger()
 
@@ -94,19 +94,18 @@ class Browser:
             logger.info(f"Successfully navigated to: {url}")
             return True
         except PlaywrightTimeoutError:
-            logger.warning(f"TimeoutError: Navigating to {url} timed out after {timeout}ms.")
+            logger.warning(
+                f"TimeoutError: Navigating to {url} timed out after {timeout}ms."
+            )
             return False
         except PlaywrightError as e:
             logger.error(f"PlaywrightError navigating to {url}: {e}")
             return False
-        except Exception as e: # Catch any other unexpected errors
+        except Exception as e:  # Catch any other unexpected errors
             logger.error(f"Unexpected error navigating to {url}: {e}")
             return False
 
-
-    async def screenshot(
-        self, project_name: str
-    ) -> Optional[Tuple[str, str]]:
+    async def screenshot(self, project_name: str) -> Optional[Tuple[str, str]]:
         """
         Take a screenshot of the current page and save it.
 
@@ -132,9 +131,13 @@ class Browser:
                 "() => { return { url: document.location.href, title: document.title } }"
             )
             page_url: str = page_metadata.get("url", "unknown_url")
-            page_title: str = page_metadata.get("title", "unknown_title").replace(" ", "_")[:50] # Sanitize title
+            page_title: str = page_metadata.get("title", "unknown_title").replace(
+                " ", "_"
+            )[
+                :50
+            ]  # Sanitize title
 
-            random_filename_part: str = os.urandom(8).hex() # Shorter random part
+            random_filename_part: str = os.urandom(8).hex()  # Shorter random part
             filename_to_save = f"{page_title}_{random_filename_part}.png"
             path_to_save: str = os.path.join(screenshots_save_path, filename_to_save)
 
@@ -146,11 +149,15 @@ class Browser:
             new_state: StateType = self.agent_state_manager.new_state()
             new_state["internal_monologue"] = f"Took a screenshot of {page_url}"
             # Ensure browser_session structure matches StateType definition
-            new_state["browser_session"] = {"url": page_url, "screenshot": path_to_save} # type: ignore
+            new_state["browser_session"] = {"url": page_url, "screenshot": path_to_save}  # type: ignore
             self.agent_state_manager.add_to_current_state(project_name, new_state)
-            
+
             # Emit screenshot data (optional, based on original logic)
-            emit_agent("screenshot", {"data": screenshot_base64, "project_name": project_name}, broadcast=False)
+            emit_agent(
+                "screenshot",
+                {"data": screenshot_base64, "project_name": project_name},
+                broadcast=False,
+            )
             logger.info(f"Screenshot saved to: {path_to_save}")
             return path_to_save, screenshot_base64
         except PlaywrightError as e:
@@ -214,7 +221,10 @@ class Browser:
                 "() => { return { url: document.location.href, title: document.title } }"
             )
             # Sanitize title for filename
-            safe_title = "".join(c if c.isalnum() else "_" for c in page_metadata.get("title", "untitled"))[:50]
+            safe_title = "".join(
+                c if c.isalnum() else "_"
+                for c in page_metadata.get("title", "untitled")
+            )[:50]
             filename_to_save = f"{safe_title}_{os.urandom(4).hex()}.pdf"
             path_to_save: str = os.path.join(pdfs_save_path, filename_to_save)
 
@@ -227,10 +237,9 @@ class Browser:
         except PlaywrightError as e:
             logger.error(f"PlaywrightError generating or saving PDF: {e}")
             return None
-        except Exception as e: # Catch errors from pdf_to_text as well
+        except Exception as e:  # Catch errors from pdf_to_text as well
             logger.error(f"Error extracting text from PDF {path_to_save}: {e}")
             return None
-
 
     def pdf_to_text(self, pdf_path: str) -> Optional[str]:
         """
@@ -244,7 +253,7 @@ class Browser:
         """
         try:
             return extract_text(pdf_path).strip()
-        except Exception as e: # Catch specific pdfminer exceptions if known
+        except Exception as e:  # Catch specific pdfminer exceptions if known
             logger.error(f"Error extracting text from PDF {pdf_path}: {e}")
             return None
 
@@ -287,6 +296,6 @@ class Browser:
             try:
                 await self.playwright.stop()
                 logger.info("Playwright context stopped.")
-            except PlaywrightError as e: # Though stop() itself doesn't usually throw
+            except PlaywrightError as e:  # Though stop() itself doesn't usually throw
                 logger.error(f"Error stopping Playwright context: {e}")
             self.playwright = None

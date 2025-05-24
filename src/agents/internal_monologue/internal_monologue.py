@@ -6,11 +6,12 @@ a brief, human-like internal thought process based on the current prompt or
 context. It uses a Large Language Model (LLM) and a Jinja2 template, expecting
 the LLM to return a JSON object containing the monologue string.
 """
+
 import json
 import re
-from typing import TypedDict, Optional
+from typing import Optional, TypedDict
 
-from jinja2 import Environment, BaseLoader
+from jinja2 import BaseLoader, Environment
 
 from src.llm import LLM
 from src.logger import Logger
@@ -103,8 +104,9 @@ class InternalMonologue:
         if match:
             json_string = match.group(1)
         else:
-            logger.info("No JSON code block found in internal_monologue response, attempting to parse entire response.")
-
+            logger.info(
+                "No JSON code block found in internal_monologue response, attempting to parse entire response."
+            )
 
         try:
             parsed_json: InternalMonologueResponseDict = json.loads(json_string)
@@ -115,7 +117,9 @@ class InternalMonologue:
             return None
 
         if not isinstance(parsed_json, dict):
-            logger.error(f"Internal_monologue response is not a JSON object: {parsed_json}")
+            logger.error(
+                f"Internal_monologue response is not a JSON object: {parsed_json}"
+            )
             return None
 
         monologue = parsed_json.get("internal_monologue")
@@ -165,7 +169,9 @@ class InternalMonologue:
             logger.error(
                 "Failed to get a valid structured internal monologue from LLM."
             )
-            return None # Caller can decide how to handle this.
+            return None  # Caller can decide how to handle this.
 
-        logger.info(f"Generated Internal Monologue: {parsed_data['internal_monologue']}")
+        logger.info(
+            f"Generated Internal Monologue: {parsed_data['internal_monologue']}"
+        )
         return parsed_data["internal_monologue"]

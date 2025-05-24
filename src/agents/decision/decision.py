@@ -7,11 +7,12 @@ a user's prompt and determining a sequence of one or more function calls
 and a Jinja2 template that instructs the LLM to output a JSON list of
 decision items, each specifying a function, its arguments, and a reply.
 """
+
 import json
 import re
-from typing import List, Dict, Any, TypedDict, Optional
+from typing import Any, Dict, List, Optional, TypedDict
 
-from jinja2 import Environment, BaseLoader
+from jinja2 import BaseLoader, Environment
 
 from src.llm import LLM
 from src.logger import Logger
@@ -106,7 +107,9 @@ class Decision:
         if match:
             json_string = match.group(1)
         else:
-            logger.info("No JSON code block found in decision response, attempting to parse entire response.")
+            logger.info(
+                "No JSON code block found in decision response, attempting to parse entire response."
+            )
 
         try:
             parsed_list: List[Dict[str, Any]] = json.loads(json_string)
@@ -167,7 +170,9 @@ class Decision:
                                             otherwise None.
         """
         if PROMPT_TEMPLATE == "Error: Decision prompt template not found.":
-            logger.error("Cannot execute decision agent due to missing prompt template.")
+            logger.error(
+                "Cannot execute decision agent due to missing prompt template."
+            )
             return None
 
         rendered_prompt = self.render(prompt)
@@ -178,9 +183,7 @@ class Decision:
         parsed_decisions = self.parse_response(llm_response_str)
 
         if not parsed_decisions:
-            logger.error(
-                "Failed to get a valid structured decision list from LLM."
-            )
+            logger.error("Failed to get a valid structured decision list from LLM.")
             return None
 
         logger.info(f"LLM decided on {len(parsed_decisions)} action(s).")

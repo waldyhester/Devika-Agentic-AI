@@ -7,20 +7,21 @@ This module defines the `Runner` class, which is responsible for:
 3.  Handling errors during execution by prompting an LLM for fixes (either to the
     commands or by requesting a code patch via the Patcher agent).
 """
-import time
-import json
-import os
-import subprocess
-import re
-from typing import List, Dict, TypedDict, Optional, Union
 
-from jinja2 import Environment, BaseLoader
+import json
+import re
+import subprocess
+import time
+from typing import List, Optional, TypedDict
+
+from jinja2 import BaseLoader, Environment
 
 from src.agents.patcher import Patcher
+from src.filesystem import ReadCode  # Added import
 from src.llm import LLM
-from src.state import AgentState, StateType
-from src.project import ProjectManager
 from src.logger import Logger
+from src.project import ProjectManager
+from src.state import AgentState, StateType
 
 # Load prompt templates.
 try:
@@ -60,7 +61,7 @@ class RerunnerActionResponseDict(TypedDict):
     """
 
     action: str
-    command: Optional[str] # Only present if action is "command"
+    command: Optional[str]  # Only present if action is "command"
     response: str
 
 
@@ -169,8 +170,9 @@ class Runner:
         if match:
             json_string = match.group(1)
         else:
-            logger.info("No JSON code block found in runner commands response, attempting to parse entire response.")
-
+            logger.info(
+                "No JSON code block found in runner commands response, attempting to parse entire response."
+            )
 
         try:
             parsed_json: RunnerCommandsResponseDict = json.loads(json_string)
@@ -180,7 +182,9 @@ class Runner:
                 logger.error(f"Invalid 'commands' field in LLM response: {parsed_json}")
                 return None
             if not all(isinstance(cmd, str) for cmd in parsed_json["commands"]):
-                logger.error(f"Not all commands are strings in LLM response: {parsed_json['commands']}")
+                logger.error(
+                    f"Not all commands are strings in LLM response: {parsed_json['commands']}"
+                )
                 return None
             return parsed_json
         except json.JSONDecodeError as e:
@@ -206,7 +210,9 @@ class Runner:
         if match:
             json_string = match.group(1)
         else:
-            logger.info("No JSON code block found in rerunner action response, attempting to parse entire response.")
+            logger.info(
+                "No JSON code block found in rerunner action response, attempting to parse entire response."
+            )
 
         try:
             parsed_json: RerunnerActionResponseDict = json.loads(json_string)
@@ -255,7 +261,7 @@ class Runner:
             bool: True if all commands executed successfully, False otherwise.
         """
         max_retries_per_command = 2
-        current_commands = list(commands_to_run) # Make a mutable copy
+        current_commands = list(commands_to_run)  # Make a mutable copy
 
         idx = 0
         while idx < len(current_commands):
@@ -264,8 +270,12 @@ class Runner:
             command_failed = True
 
             while command_failed and retries <= max_retries_per_command:
-                self.logger.info(f"Executing command: {command} in {project_path} (Attempt {retries + 1})")
-                command_parts = command.split(" ") # Simple split, might need shlex for complex commands
+                self.logger.info(
+                    f"Executing command: {command} in {project_path} (Attempt {retries + 1})"
+                )
+                command_parts = command.split(
+                    " "
+                )  # Simple split, might need shlex for complex commands
 
                 try:
                     process = subprocess.run(
@@ -273,16 +283,17 @@ class Runner:
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         cwd=project_path,
-                        text=True, # For Python 3.7+
-                        check=False, # Don't raise exception on non-zero exit
+                        text=True,  # For Python 3.7+
+                        check=False,  # Don't raise exception on non-zero exit
                     )
                     command_output = process.stdout + process.stderr
                     command_failed = process.returncode != 0
                 except Exception as e:
-                    self.logger.error(f"Subprocess execution failed for command '{command}': {e}")
+                    self.logger.error(
+                        f"Subprocess execution failed for command '{command}': {e}"
+                    )
                     command_output = str(e)
                     command_failed = True
-
 
                 latest_state: StateType = self.agent_state.new_state()
                 latest_state["internal_monologue"] = (
@@ -290,58 +301,73 @@ class Runner:
                     if not command_failed
                     else f"Error executing command: {command}. Output: {command_output[:100]}..."
                 )
-                latest_state["terminal_session"] = { # type: ignore
+                latest_state["terminal_session"] = {  # type: ignore
                     "title": "Terminal Output",
                     "command": command,
                     "output": command_output,
                 }
                 self.agent_state.add_to_current_state(project_name, latest_state)
-                time.sleep(0.5) # Allow UI to update
+                time.sleep(0.5)  # Allow UI to update
 
                 if not command_failed:
                     self.logger.info(f"Command '{command}' executed successfully.")
-                    idx += 1 # Move to next command
-                    break # Exit retry loop for this command
+                    idx += 1  # Move to next command
+                    break  # Exit retry loop for this command
 
                 # Command failed, attempt to handle error
                 retries += 1
                 if retries > max_retries_per_command:
-                    self.logger.error(f"Command '{command}' failed after {max_retries_per_command} retries. Aborting run.")
-                    self.project_manager.add_message_from_devika(project_name, f"I encountered an error with command: `{command}` that I couldn't resolve after multiple attempts. Error: {command_output[:200]}...")
-                    return False # Overall execution failed
+                    self.logger.error(
+                        f"Command '{command}' failed after {max_retries_per_command} retries. Aborting run."
+                    )
+                    self.project_manager.add_message_from_devika(
+                        project_name,
+                        f"I encountered an error with command: `{command}` that I couldn't resolve after multiple attempts. Error: {command_output[:200]}...",
+                    )
+                    return False  # Overall execution failed
 
-                self.project_manager.add_message_from_devika(project_name, f"I encountered an error with command: `{command}`. Error: {command_output[:200]}. Let me try to fix this.")
+                self.project_manager.add_message_from_devika(
+                    project_name,
+                    f"I encountered an error with command: `{command}`. Error: {command_output[:200]}. Let me try to fix this.",
+                )
 
                 rerunner_prompt = self._render_rerunner_prompt(
                     conversation=conversation_history,
                     code_markdown=code_markdown_context,
                     system_os=os_platform,
-                    commands=current_commands, # Pass current list of commands
+                    commands=current_commands,  # Pass current list of commands
                     error_output=command_output,
                 )
                 if "Rerunner prompt template is missing" in rerunner_prompt:
-                    self.logger.error("Cannot attempt rerun due to missing rerunner prompt template.")
+                    self.logger.error(
+                        "Cannot attempt rerun due to missing rerunner prompt template."
+                    )
                     return False
-
 
                 llm_rerun_response = self.llm.inference(rerunner_prompt, project_name)
                 action_data = self._parse_rerunner_action_response(llm_rerun_response)
 
                 if not action_data:
-                    self.logger.error("Failed to get a valid action from LLM for error handling.")
-                    continue # Retry the same command if LLM fails to give action
+                    self.logger.error(
+                        "Failed to get a valid action from LLM for error handling."
+                    )
+                    continue  # Retry the same command if LLM fails to give action
 
-                self.project_manager.add_message_from_devika(project_name, action_data["response"])
+                self.project_manager.add_message_from_devika(
+                    project_name, action_data["response"]
+                )
 
                 if action_data["action"] == "command":
                     new_command = action_data.get("command")
                     if new_command and isinstance(new_command, str):
                         self.logger.info(f"LLM suggested new command: {new_command}")
-                        current_commands[idx] = new_command # Replace current command
-                        command = new_command # Update command for the next iteration of the retry loop
+                        current_commands[idx] = new_command  # Replace current command
+                        command = new_command  # Update command for the next iteration of the retry loop
                         # Reset retries for the new command is implicitly handled by continuing the loop
                     else:
-                        self.logger.error("LLM action 'command' but no valid command provided.")
+                        self.logger.error(
+                            "LLM action 'command' but no valid command provided."
+                        )
                         # Continue to retry the original failed command
                 elif action_data["action"] == "patch":
                     self.logger.info("LLM suggested patching the code.")
@@ -349,24 +375,31 @@ class Runner:
                     patched_code_files = patcher.execute(
                         conversation=conversation_history,
                         code_markdown=code_markdown_context,
-                        commands=current_commands, # Pass commands that led to error
+                        commands=current_commands,  # Pass commands that led to error
                         error=command_output,
                         system_os=os_platform,
                         project_name=project_name,
                     )
                     if patched_code_files:
                         patcher.save_code_to_project(patched_code_files, project_name)
-                        self.project_manager.add_message_from_devika(project_name, "I've applied the patches. Let's try running the command again.")
+                        self.project_manager.add_message_from_devika(
+                            project_name,
+                            "I've applied the patches. Let's try running the command again.",
+                        )
                         # Code has changed, so update context for next potential LLM call
-                        code_markdown_context = ReadCode(project_name).code_set_to_markdown()
+                        code_markdown_context = ReadCode(
+                            project_name
+                        ).code_set_to_markdown()
                         # Retry the same command after patching
                     else:
                         self.logger.error("Patcher failed to generate valid patches.")
-                        self.project_manager.add_message_from_devika(project_name, "I tried to patch the code but encountered an issue. I'll try the command again.")
+                        self.project_manager.add_message_from_devika(
+                            project_name,
+                            "I tried to patch the code but encountered an issue. I'll try the command again.",
+                        )
                         # Continue to retry the original failed command
 
-        return True # All commands (potentially after fixes) executed successfully
-
+        return True  # All commands (potentially after fixes) executed successfully
 
     def execute(
         self,
@@ -410,13 +443,17 @@ class Runner:
 
         if not parsed_commands_data or not parsed_commands_data["commands"]:
             logger.error("Failed to get valid execution commands from LLM.")
-            self.project_manager.add_message_from_devika(project_name, "I couldn't determine the commands to run the project.")
+            self.project_manager.add_message_from_devika(
+                project_name, "I couldn't determine the commands to run the project."
+            )
             return None
 
         commands_to_run = parsed_commands_data["commands"]
         self.logger.info(f"LLM suggested run commands: {commands_to_run}")
-        self.project_manager.add_message_from_devika(project_name, f"Okay, I will try to run the project using the following commands: `{'`, `'.join(commands_to_run)}`")
-
+        self.project_manager.add_message_from_devika(
+            project_name,
+            f"Okay, I will try to run the project using the following commands: `{'`, `'.join(commands_to_run)}`",
+        )
 
         success = self._execute_commands_in_project(
             commands_to_run,
@@ -428,9 +465,14 @@ class Runner:
         )
 
         if success:
-            self.project_manager.add_message_from_devika(project_name, "The project execution seems to have completed successfully.")
+            self.project_manager.add_message_from_devika(
+                project_name,
+                "The project execution seems to have completed successfully.",
+            )
         else:
-            self.project_manager.add_message_from_devika(project_name, "There were issues during project execution that could not be fully resolved.")
+            self.project_manager.add_message_from_devika(
+                project_name,
+                "There were issues during project execution that could not be fully resolved.",
+            )
 
-
-        return commands_to_run # Return the commands that were attempted
+        return commands_to_run  # Return the commands that were attempted
