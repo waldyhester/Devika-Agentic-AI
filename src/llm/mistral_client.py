@@ -13,9 +13,6 @@ class MistralAi:
     def inference(self, model_id: str, prompt: str) -> str:
         print("prompt", prompt.strip())
         chat_completion = self.client.chat(
-            model=model_id,
-            messages=[
-                ChatMessage(role="user", content=prompt.strip())
-            ]
+            model=model_id, messages=[ChatMessage(role="user", content=prompt.strip())]
         )
         return chat_completion.choices[0].message.content

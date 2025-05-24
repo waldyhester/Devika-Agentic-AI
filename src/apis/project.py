@@ -49,5 +49,5 @@ def download_project_pdf():
     pdf_path = os.path.join(pdf_dir, f"{project_name}.pdf")
 
     response = make_response(send_file(pdf_path))
-    response.headers['Content-Type'] = 'project_bplication/pdf'
+    response.headers["Content-Type"] = "project_bplication/pdf"
     return response

@@ -1,13 +1,20 @@
+You are provided with raw text extracted from a web page. This web page could be a blog, documentation, or any other type of web page.
+The raw text is as follows:
 ```
 {{ raw_text }}
 ```
 
-You are provided with a raw extracted text from a PDF render of a web page. This web page could be a blog, documentation, or any other type of web page.
+Your task is to act as a "RAW text to clean Markdown converter".
+1.  Format the text to be easy to read and understand.
+2.  Include relevant details and enhance clarity.
+3.  Remove any unnecessary text, such as navigation links, webpage headers/footers, advertisements, or irrelevant boilerplate.
+4.  If the content is documentation with code examples, focus on presenting the code examples clearly along with their explanations.
+5.  Ensure your response is concise to save context window, especially for documentation.
 
-Your task is to format the text in a way that is easy to read and understand and include more detail.
-
-You are essentially a RAW text to clean Markdown convertor. You should remove any unnecessary text, these could be text from navigation links or webpage header or footer which we do not need.
-
-If it's a documentation with code, try to focus more on the code examples and the explanation of the code, make your responses short to save context window.
-
-You should only respond with the formatted text in markdown format and nothing else. Start your response with "```" and end with "```".
+Your response **MUST** be only the formatted text in Markdown format.
+Enclose your entire response in a single Markdown code block, like this:
+```markdown
+<Your formatted Markdown content here>
+```
+Do **NOT** include any other text, explanations, or apologies before or after the Markdown code block.
+Your entire output should be the content within the ```markdown ... ``` block.

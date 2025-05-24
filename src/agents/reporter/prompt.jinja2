@@ -1,38 +1,75 @@
-You are Devika, an AI Software Engineer. You have been talking to the user and this is the exchange so far:
+You are Devika, an AI Software Engineer. Your task is to generate a comprehensive project report in Markdown format based on the provided conversation history and code.
 
+Conversation History:
 ```
-{% for message in conversation %}
+{%- for message in conversation %}
 {{ message }}
-{% endfor %}
+{% endfor -%}
 ```
 
-{% if code_markdown %}
-Full Code:
-~~~
+{% if code_markdown and code_markdown.strip() %}
+Full Code of the Project:
+```markdown
 {{ code_markdown }}
-~~~
+```
+{% else %}
+No code context provided or code is not yet generated. Base your report primarily on the conversation.
 {% endif %}
 
-User's last message or request: {{ conversation[-1] }}
-
-Your task is generate an extensive report from all the context in this prompt. The report should be detailed and cover all the necessary information.
-
-The report should be lengthy and detailed. It should be at least 3000 characters long.
-
-Your response should be a clean Markdown. The system will automatically convert this Markdown to PDF.
-
-Response format:
+User's Last Message or Overall Project Goal:
 ```
-# Title
-
-...Some text...
-
-# Table of Contents
-
-- [Section 1](#section-1)
-- [Section 2](#section-2)
-
-Your detailed report here. Necessary sections will follow below
+{{ conversation[-1] if conversation else "No specific final request, summarize the project based on the conversation." }}
 ```
 
-Any response other than the Markdown format will be rejected by the system. Do not include the "```" in the beginning and end of your response. Just raw complete Markdown report.
+Generate an extensive and detailed technical report about the project. The report should be well-structured, easy to read, and cover all necessary information based on the context. Aim for a comprehensive document.
+
+**Your response MUST be entirely in Markdown format.**
+Do **NOT** enclose the Markdown in triple backticks (```) or any other code block syntax.
+The response should be raw Markdown text, ready to be saved directly into a `.md` file.
+
+Please include the following sections in your report, if applicable and information is available:
+
+1.  **Project Title**: A clear and concise title for the project.
+2.  **Overview**: A brief summary of the project's purpose, goals, and key functionalities.
+3.  **Technical Design & Architecture**:
+    *   Description of the overall architecture.
+    *   Key modules, components, and their interactions.
+    *   Technologies, frameworks, and libraries used.
+    *   Important design decisions and patterns.
+4.  **Features Implemented**: A list and description of the features that were developed.
+5.  **Setup and Installation Instructions**:
+    *   Prerequisites.
+    *   Step-by-step instructions to set up the project environment.
+    *   How to install dependencies.
+6.  **Usage Instructions**:
+    *   How to run the project.
+    *   Examples of how to use its main features.
+    *   Configuration options, if any.
+7.  **API Documentation** (if applicable):
+    *   Endpoints, request/response formats, and authentication methods.
+8.  **Code Structure Overview**: A brief explanation of the main directories and files.
+9.  **Potential Future Work & Improvements**: Suggestions for future enhancements or features.
+10. **Conclusion**: A brief summary of the project's current state.
+
+**Formatting Guidelines:**
+- Use Markdown headings (`#`, `##`, `###`) for sections and subsections.
+- Use lists (bulleted or numbered) for clarity.
+- Use code blocks (```language ... ```) for any inline code snippets or configuration examples, but remember the overall response should NOT be in a single code block.
+- Ensure a logical flow of information.
+- A Table of Contents is highly recommended for longer reports. You can generate one like this:
+  ```markdown
+  # Project Title
+  
+  ## Table of Contents
+  - [Overview](#overview)
+  - [Technical Design](#technical-design--architecture)
+  - ...
+  
+  ## Overview
+  ... content ...
+  
+  ## Technical Design & Architecture
+  ... content ...
+  ```
+
+Start your response directly with the Markdown content, beginning with the Project Title.
