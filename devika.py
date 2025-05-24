@@ -2,11 +2,14 @@
     DO NOT REARRANGE THE ORDER OF THE FUNCTION CALLS AND VARIABLE DECLARATIONS
     AS IT MAY CAUSE IMPORT ERRORS AND OTHER ISSUES
 """
+
 # import eventlet
 # eventlet.monkey_patch()
 from gevent import monkey
+
 monkey.patch_all()
 from src.init import init_devika
+
 init_devika()
 
 
@@ -48,7 +51,7 @@ logger = Logger()
 
 
 # initial socket
-@socketio.on('socket_connect')
+@socketio.on("socket_connect")
 def test_connect(data):
     print("Socket connected :: ", data)
     emit_agent("socket_response", {"data": "Server Connected"})
@@ -60,7 +63,9 @@ def data():
     project = manager.get_project_list()
     models = LLM().list_models()
     search_engines = ["Bing", "Google", "DuckDuckGo"]
-    return jsonify({"projects": project, "models": models, "search_engines": search_engines})
+    return jsonify(
+        {"projects": project, "models": models, "search_engines": search_engines}
+    )
 
 
 @app.route("/api/messages", methods=["POST"])
@@ -72,27 +77,29 @@ def get_messages():
 
 
 # Main socket
-@socketio.on('user-message')
+@socketio.on("user-message")
 def handle_message(data):
-    action = data.get('action')
-    message = data.get('message')
-    base_model = data.get('base_model')
-    project_name = data.get('project_name')
-    search_engine = data.get('search_engine').lower()
+    action = data.get("action")
+    message = data.get("message")
+    base_model = data.get("base_model")
+    project_name = data.get("project_name")
+    search_engine = data.get("search_engine").lower()
 
     agent = Agent(base_model=base_model, search_engine=search_engine)
 
-    if action == 'continue':
+    if action == "continue":
         new_message = manager.new_message()
-        new_message['message'] = message
-        new_message['from_devika'] = False
-        manager.add_message_from_user(project_name, new_message['message'])
+        new_message["message"] = message
+        new_message["from_devika"] = False
+        manager.add_message_from_user(project_name, new_message["message"])
 
         if AgentState.is_agent_completed(project_name):
-            thread = Thread(target=lambda: agent.subsequent_execute(message, project_name))
+            thread = Thread(
+                target=lambda: agent.subsequent_execute(message, project_name)
+            )
             thread.start()
 
-    if action == 'execute_agent':
+    if action == "execute_agent":
         thread = Thread(target=lambda: agent.execute(message, project_name))
         thread.start()
 

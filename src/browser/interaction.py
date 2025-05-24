@@ -1,547 +1,517 @@
-#!/usr/bin/env python3
-#
-# natbot.py
-# https://github.com/nat/natbot
-#
-# MODIFIED FOR DEVIKA
+"""
+Enables an LLM to interact with a web page through a simplified text interface.
 
-from playwright.sync_api import sync_playwright
+This module is based on the concepts from natbot (https://github.com/nat/natbot),
+modified for integration with the Devika application. It defines a `Crawler` class
+that uses Playwright's synchronous API to interact with web pages, simplify their
+content into a text-based representation, and execute commands (like click, type, scroll)
+determined by an LLM.
+
+The `start_interaction` function orchestrates this process, taking an objective
+and using an LLM to drive the `Crawler` towards that objective.
+"""
 import os
+import re
 import time
-from sys import exit, platform
+import json
+from sys import platform
+from typing import List, Dict, Any, Optional, TypedDict, Set
+
+from jinja2 import Environment, BaseLoader
+from playwright.sync_api import (
+    sync_playwright,
+    Page as SyncPage,
+    Browser as SyncBrowser,
+    Playwright as SyncPlaywright,
+    CDPSession,
+    Error as PlaywrightError, # General Playwright error
+    TimeoutError as PlaywrightTimeoutError, # For specific timeout errors
+)
 
 from src.config import Config
-from src.state import AgentState
+from src.state import AgentState, StateType
 from src.llm import LLM
+from src.logger import Logger
 
-prompt_template = """
-You are an agent controlling a browser. You are given:
+logger = Logger()
 
-	(1) an objective that you are trying to achieve
-	(2) the URL of your current web page
-	(3) a simplified text description of what's visible in the browser window (more on that below)
+# Load the prompt template from the associated Jinja2 file.
+try:
+    with open("src/browser/interaction_prompt.jinja2", "r", encoding="utf-8") as f:
+        PROMPT_TEMPLATE = f.read().strip()
+except FileNotFoundError:
+    PROMPT_TEMPLATE = "Error: Browser interaction prompt template not found."
+    logger.error(PROMPT_TEMPLATE)
 
-You can issue these commands:
-	SCROLL UP - scroll up one page
-	SCROLL DOWN - scroll down one page
-	CLICK X - click on a given element. You can only click on links, buttons, and inputs!
-	TYPE X "TEXT" - type the specified text into the input with id X
-	TYPESUBMIT X "TEXT" - same as TYPE above, except then it presses ENTER to submit the form
 
-The format of the browser content is highly simplified; all formatting elements are stripped.
-Interactive elements such as links, inputs, buttons are represented like this:
+# Elements that are typically not useful for LLM context or interaction
+BLACKLISTED_ELEMENTS: Set[str] = {
+    "html", "head", "title", "meta", "iframe", "body", "script", "style",
+    "path", "svg", "br", "::marker",
+}
 
-		<link id=1>text</link>
-		<button id=2>text</button>
-		<input id=3>text</input>
+# Type definition for the structured action expected from the LLM
+class LLMAction(TypedDict):
+    action_type: str  # e.g., "CLICK", "TYPE", "SCROLL", "COMPLETE", "FAIL"
+    target_id: Optional[str]
+    text_value: Optional[str]
+    is_complete: bool
+    justification: str
 
-Images are rendered as their alt text like this:
-
-		<img id=4 alt=""/>
-
-Based on your given objective, issue whatever command you believe will get you closest to achieving your goal.
-You always start on Google; you should submit a search query to Google that will take you to the best page for
-achieving your objective. And then interact with that page to achieve your objective.
-
-If you find yourself on Google and there are no search results displayed yet, you should probably issue a command 
-like "TYPESUBMIT 7 "search query"" to get to a more useful page.
-
-Then, if you find yourself on a Google search results page, you might issue the command "CLICK 24" to click
-on the first link in the search results. (If your previous command was a TYPESUBMIT your next command should
-probably be a CLICK.)
-
-Don't try to interact with elements that you can't see.
-
-Here are some examples:
-
-EXAMPLE 1:
-==================================================
-CURRENT BROWSER CONTENT:
-------------------
-<link id=1>About</link>
-<link id=2>Store</link>
-<link id=3>Gmail</link>
-<link id=4>Images</link>
-<link id=5>(Google apps)</link>
-<link id=6>Sign in</link>
-<img id=7 alt="(Google)"/>
-<input id=8 alt="Search"></input>
-<button id=9>(Search by voice)</button>
-<button id=10>(Google Search)</button>
-<button id=11>(I'm Feeling Lucky)</button>
-<link id=12>Advertising</link>
-<link id=13>Business</link>
-<link id=14>How Search works</link>
-<link id=15>Carbon neutral since 2007</link>
-<link id=16>Privacy</link>
-<link id=17>Terms</link>
-<text id=18>Settings</text>
-------------------
-OBJECTIVE: Find a 2 bedroom house for sale in Anchorage AK for under $750k
-CURRENT URL: https://www.google.com/
-YOUR COMMAND: 
-TYPESUBMIT 8 "anchorage redfin"
-==================================================
-
-EXAMPLE 2:
-==================================================
-CURRENT BROWSER CONTENT:
-------------------
-<link id=1>About</link>
-<link id=2>Store</link>
-<link id=3>Gmail</link>
-<link id=4>Images</link>
-<link id=5>(Google apps)</link>
-<link id=6>Sign in</link>
-<img id=7 alt="(Google)"/>
-<input id=8 alt="Search"></input>
-<button id=9>(Search by voice)</button>
-<button id=10>(Google Search)</button>
-<button id=11>(I'm Feeling Lucky)</button>
-<link id=12>Advertising</link>
-<link id=13>Business</link>
-<link id=14>How Search works</link>
-<link id=15>Carbon neutral since 2007</link>
-<link id=16>Privacy</link>
-<link id=17>Terms</link>
-<text id=18>Settings</text>
-------------------
-OBJECTIVE: Make a reservation for 4 at Dorsia at 8pm
-CURRENT URL: https://www.google.com/
-YOUR COMMAND: 
-TYPESUBMIT 8 "dorsia nyc opentable"
-==================================================
-
-EXAMPLE 3:
-==================================================
-CURRENT BROWSER CONTENT:
-------------------
-<button id=1>For Businesses</button>
-<button id=2>Mobile</button>
-<button id=3>Help</button>
-<button id=4 alt="Language Picker">EN</button>
-<link id=5>OpenTable logo</link>
-<button id=6 alt ="search">Search</button>
-<text id=7>Find your table for any occasion</text>
-<button id=8>(Date selector)</button>
-<text id=9>Sep 28, 2022</text>
-<text id=10>7:00 PM</text>
-<text id=11>2 people</text>
-<input id=12 alt="Location, Restaurant, or Cuisine"></input> 
-<button id=13>Let's go</button>
-<text id=14>It looks like you're in Peninsula. Not correct?</text> 
-<button id=15>Get current location</button>
-<button id=16>Next</button>
-------------------
-OBJECTIVE: Make a reservation for 4 for dinner at Dorsia in New York City at 8pm
-CURRENT URL: https://www.opentable.com/
-YOUR COMMAND: 
-TYPESUBMIT 12 "dorsia new york city"
-==================================================
-
-The current browser content, objective, and current URL follow. Reply with your next command to the browser.
-
-CURRENT BROWSER CONTENT:
-------------------
-$browser_content
-------------------
-
-OBJECTIVE: $objective
-CURRENT URL: $url
-PREVIOUS COMMAND: $previous_command
-YOUR COMMAND:
-"""
-
-black_listed_elements = set(["html", "head", "title", "meta", "iframe", "body", "script", "style", "path", "svg", "br", "::marker",])
 
 class Crawler:
-	def __init__(self):
-		self.browser = (
-			sync_playwright()
-			.start()
-			.chromium.launch(
-				headless=True,
-			)
-		)
+    """
+    A synchronous web crawler that simplifies web content for LLM interaction.
 
-		self.page = self.browser.new_page()
-		self.page.set_viewport_size({"width": 1280, "height": 1080})
-  
-	def screenshot(self, project_name):
-		screenshots_save_path = Config().get_screenshots_dir()
+    Uses Playwright's synchronous API to navigate pages, extract a simplified
+    representation of the DOM, and execute commands.
 
-		page_metadata = self.page.evaluate("() => { return { url: document.location.href, title: document.title } }")
-		page_url = page_metadata['url']
-		random_filename = os.urandom(20).hex()
-		filename_to_save = f"{random_filename}.png"
-		path_to_save = os.path.join(screenshots_save_path, filename_to_save)
+    Attributes:
+        playwright_context (SyncPlaywright): Playwright synchronous context manager.
+        browser (SyncBrowser): Playwright browser instance.
+        page (SyncPage): Current Playwright page object.
+        client (Optional[CDPSession]): Chrome DevTools Protocol session.
+        page_element_buffer (Dict[int, Dict[str, Any]]): Stores metadata of interactable
+                                                         elements visible on the current page,
+                                                         keyed by a simplified ID.
+        config (Config): Application configuration.
+        agent_state_manager (AgentState): Manages agent state.
+    """
 
-		self.page.emulate_media(media="screen")
-		self.page.screenshot(path=path_to_save)
+    def __init__(self) -> None:
+        """Initialize the Crawler, launching a Playwright browser instance."""
+        self.playwright_context: SyncPlaywright = sync_playwright().start()
+        self.browser: SyncBrowser = self.playwright_context.chromium.launch(headless=True)
+        self.page: SyncPage = self.browser.new_page()
+        self.page.set_viewport_size({"width": 1280, "height": 1080})
+        self.client: Optional[CDPSession] = None
+        self.page_element_buffer: Dict[int, Dict[str, Any]] = {}
+        self.config: Config = Config()
+        self.agent_state_manager: AgentState = AgentState()
+        logger.info("Crawler initialized with Playwright browser.")
 
-		new_state = AgentState().new_state()
-		new_state["internal_monologue"] = "Browsing the web right now..."
-		new_state["browser_session"]["url"] = page_url
-		new_state["browser_session"]["screenshot"] = path_to_save
-		AgentState().add_to_current_state(project_name, new_state)        
 
-		return path_to_save
+    def screenshot(self, project_name: str) -> Optional[str]:
+        """
+        Take a screenshot of the current page and save it.
 
-	def go_to_page(self, url):
-		self.page.goto(url=url if "://" in url else "http://" + url)
-		self.client = self.page.context.new_cdp_session(self.page)
-		self.page_element_buffer = {}
+        Updates agent state with the screenshot information.
 
-	def scroll(self, direction):
-		if direction == "up":
-			self.page.evaluate(
-				"(document.scrollingElement || document.body).scrollTop = (document.scrollingElement || document.body).scrollTop - window.innerHeight;"
-			)
-		elif direction == "down":
-			self.page.evaluate(
-				"(document.scrollingElement || document.body).scrollTop = (document.scrollingElement || document.body).scrollTop + window.innerHeight;"
-			)
+        Args:
+            project_name (str): The name of the project for context.
 
-	def click(self, id):
-		# Inject javascript into the page which removes the target= attribute from all links
-		js = """
-		links = document.getElementsByTagName("a");
-		for (var i = 0; i < links.length; i++) {
-			links[i].removeAttribute("target");
-		}
-		"""
-		self.page.evaluate(js)
+        Returns:
+            Optional[str]: The path to the saved screenshot, or None on error.
+        """
+        screenshots_save_path: str = self.config.get_screenshots_dir()
+        os.makedirs(screenshots_save_path, exist_ok=True)
 
-		element = self.page_element_buffer.get(int(id))
-		if element:
-			x = element.get("center_x")
-			y = element.get("center_y")
-			
-			self.page.mouse.click(x, y)
-		else:
-			print("Could not find element")
+        try:
+            page_metadata: Dict[str, str] = self.page.evaluate(
+                "() => { return { url: document.location.href, title: document.title } }"
+            )
+            page_url: str = page_metadata.get("url", "unknown_url")
+            page_title_slug: str = re.sub(r'\W+', '_', page_metadata.get("title", "untitled"))[:50]
+            
+            random_filename_part = os.urandom(8).hex()
+            filename_to_save = f"{page_title_slug}_{random_filename_part}.png"
+            path_to_save = os.path.join(screenshots_save_path, filename_to_save)
 
-	def type(self, id, text):
-		self.click(id)
-		self.page.keyboard.type(text)
+            self.page.emulate_media(media="screen")
+            self.page.screenshot(path=path_to_save)
 
-	def enter(self):
-		self.page.keyboard.press("Enter")
+            new_state: StateType = self.agent_state_manager.new_state()
+            new_state["internal_monologue"] = f"Took a screenshot of {page_url}"
+            new_state["browser_session"] = {"url": page_url, "screenshot": path_to_save} # type: ignore
+            self.agent_state_manager.add_to_current_state(project_name, new_state)
+            logger.info(f"Screenshot saved to {path_to_save}")
+            return path_to_save
+        except PlaywrightError as e:
+            logger.error(f"Playwright error during screenshot: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error during screenshot: {e}")
+            return None
 
-	def crawl(self):
-		page = self.page
-		page_element_buffer = self.page_element_buffer
-		start = time.time()
 
-		page_state_as_text = []
+    def go_to_page(self, url: str) -> bool:
+        """
+        Navigate to a specified URL.
 
-		device_pixel_ratio = page.evaluate("window.devicePixelRatio")
-		if platform == "darwin" and device_pixel_ratio == 1:  # lies
-			device_pixel_ratio = 2
+        Args:
+            url (str): The URL to navigate to.
 
-		win_scroll_x 		= page.evaluate("window.scrollX")
-		win_scroll_y 		= page.evaluate("window.scrollY")
-		win_upper_bound 	= page.evaluate("window.pageYOffset")
-		win_left_bound 		= page.evaluate("window.pageXOffset") 
-		win_width 			= page.evaluate("window.screen.width")
-		win_height 			= page.evaluate("window.screen.height")
-		win_right_bound 	= win_left_bound + win_width
-		win_lower_bound 	= win_upper_bound + win_height
-		document_offset_height = page.evaluate("document.body.offsetHeight")
-		document_scroll_height = page.evaluate("document.body.scrollHeight")
+        Returns:
+            bool: True if navigation was successful, False otherwise.
+        """
+        try:
+            full_url = url if "://" in url else "http://" + url
+            self.page.goto(url=full_url, timeout=30000)
+            self.client = self.page.context.new_cdp_session(self.page)
+            self.page_element_buffer = {} # Clear buffer for new page
+            logger.info(f"Navigated to URL: {full_url}")
+            return True
+        except PlaywrightTimeoutError:
+            logger.warning(f"Timeout navigating to URL: {url}")
+            return False
+        except PlaywrightError as e:
+            logger.error(f"Playwright error navigating to {url}: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error navigating to {url}: {e}")
+            return False
 
-		# Removed unused percentage_progress variables
 
-		tree = self.client.send(
-			"DOMSnapshot.captureSnapshot",
-			{"computedStyles": [], "includeDOMRects": True, "includePaintOrder": True},
-		)
-		strings	 	= tree["strings"]
-		document 	= tree["documents"][0]
-		nodes 		= document["nodes"]
-		backend_node_id = nodes["backendNodeId"]
-		attributes 	= nodes["attributes"]
-		node_value 	= nodes["nodeValue"]
-		parent 		= nodes["parentIndex"]
-		node_types 	= nodes["nodeType"]
-		node_names 	= nodes["nodeName"]
-		is_clickable = set(nodes["isClickable"]["index"])
+    def scroll(self, direction: str) -> None:
+        """
+        Scroll the page up or down.
 
-		text_value 			= nodes["textValue"]
-		text_value_index 	= text_value["index"]
-		text_value_values 	= text_value["value"]
+        Args:
+            direction (str): "up" or "down".
+        """
+        try:
+            if direction == "up":
+                self.page.evaluate(
+                    "(document.scrollingElement || document.body).scrollTop = "
+                    "(document.scrollingElement || document.body).scrollTop - window.innerHeight;"
+                )
+            elif direction == "down":
+                self.page.evaluate(
+                    "(document.scrollingElement || document.body).scrollTop = "
+                    "(document.scrollingElement || document.body).scrollTop + window.innerHeight;"
+                )
+            logger.info(f"Scrolled {direction}.")
+        except PlaywrightError as e:
+            logger.error(f"Playwright error during scroll: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error during scroll: {e}")
 
-		input_value 		= nodes["inputValue"]
-		input_value_index 	= input_value["index"]
-		input_value_values 	= input_value["value"]
 
-		input_checked 		= nodes["inputChecked"]
-		layout 				= document["layout"]
-		layout_node_index 	= layout["nodeIndex"]
-		bounds 				= layout["bounds"]
+    def click(self, element_id_str: str) -> None:
+        """
+        Click on an element identified by its simplified ID.
 
-		cursor = 0
-		html_elements_text = []
+        Args:
+            element_id_str (str): The string ID of the element from `page_element_buffer`.
+        """
+        try:
+            element_id = int(element_id_str)
+            element_info = self.page_element_buffer.get(element_id)
+            if not element_info:
+                logger.warning(f"Element with ID {element_id_str} not found in buffer for clicking.")
+                return
 
-		child_nodes = {}
-		elements_in_view_port = []
-		
-		# Refactored to use dict.setdefault() for cleaner logic
-		ancestor_exceptions = {
-			"a": {"ancestry": {"-1": (False, None)}, "nodes": {}},
-			"button": {"ancestry": {"-1": (False, None)}, "nodes": {}},
-		}
+            # Remove target="_blank" to prevent new tabs
+            self.page.evaluate(
+                '() => { for (const link of document.getElementsByTagName("a")) { link.removeAttribute("target"); } }'
+            )
+            
+            x = element_info.get("center_x")
+            y = element_info.get("center_y")
 
-		def convert_name(node_name, is_clickable):
-			if node_name == "a":
-				return "link"
-			if node_name == "input":
-				return "input"
-			if node_name == "img":
-				return "img"
-			if node_name == "button" or is_clickable:
-				return "button"
-			return "text"
+            if x is not None and y is not None:
+                self.page.mouse.click(x, y)
+                logger.info(f"Clicked element with ID {element_id_str} at ({x}, {y}).")
+            else:
+                logger.warning(f"Center coordinates not found for element ID {element_id_str}.")
+        except ValueError:
+            logger.error(f"Invalid element ID format for click: {element_id_str}")
+        except PlaywrightError as e:
+            logger.error(f"Playwright error during click on element ID {element_id_str}: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error during click on element ID {element_id_str}: {e}")
 
-		def find_attributes(attributes, keys):
-			values = {}
-			for [key_index, value_index] in zip(*(iter(attributes),) * 2):
-				if value_index < 0:
-					continue
-				key = strings[key_index]
-				value = strings[value_index]
-				if key in keys:
-					values[key] = value
-					keys.remove(key)
-					if not keys:
-						return values
-			return values
 
-		def add_to_hash_tree(hash_tree, tag, node_id, node_name, parent_id):
-			parent_id_str = str(parent_id)
-			if parent_id_str not in hash_tree:
-				parent_name = strings[node_names[parent_id]].lower()
-				grand_parent_id = parent[parent_id]
-				add_to_hash_tree(hash_tree, tag, parent_id, parent_name, grand_parent_id)
-			is_parent_desc_anchor, anchor_id = hash_tree[parent_id_str]
-			value = (True, node_id) if node_name == tag else (True, anchor_id) if is_parent_desc_anchor else (False, None)
-			hash_tree[str(node_id)] = value
-			return value
+    def type_into(self, element_id_str: str, text: str, submit: bool = False) -> None:
+        """
+        Type text into an input field and optionally submit by pressing Enter.
 
-		for index, node_name_index in enumerate(node_names):
-			node_parent = parent[index]
-			node_name = strings[node_name_index].lower()
+        Args:
+            element_id_str (str): The string ID of the input element.
+            text (str): The text to type.
+            submit (bool): Whether to press Enter after typing. Defaults to False.
+        """
+        try:
+            self.click(element_id_str) # Focus the element by clicking it
+            self.page.keyboard.type(text)
+            logger.info(f"Typed '{text}' into element ID {element_id_str}.")
+            if submit:
+                self.page.keyboard.press("Enter")
+                logger.info(f"Submitted form after typing into element ID {element_id_str}.")
+        except PlaywrightError as e:
+            logger.error(f"Playwright error during type into element ID {element_id_str}: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error during type into element ID {element_id_str}: {e}")
 
-			# Refactored to use dict to store exceptions
-			for tag in ancestor_exceptions:
-				is_ancestor_of_tag, tag_id = add_to_hash_tree(ancestor_exceptions[tag]["ancestry"], tag, index, node_name, node_parent)
-				ancestor_exceptions[tag]["nodes"][str(index)] = (is_ancestor_of_tag, tag_id)
-				
-			try:
-				cursor = layout_node_index.index(index)
-			except:
-				continue
 
-			if node_name in black_listed_elements:
-				continue
+    def crawl_page_content(self) -> List[str]:
+        """
+        Crawl the current page and return a simplified text representation of visible elements.
 
-			[x, y, width, height] = bounds[cursor]
-			x /= device_pixel_ratio
-			y /= device_pixel_ratio
-			width /= device_pixel_ratio
-			height /= device_pixel_ratio
+        This method captures a DOM snapshot, processes it to identify visible and
+        interactable elements, and formats them into a simplified string list.
+        This list is intended for an LLM to understand the page structure.
 
-			elem_left_bound = x
-			elem_top_bound = y
-			elem_right_bound = x + width
-			elem_lower_bound = y + height
+        Returns:
+            List[str]: A list of strings, where each string represents an interactable
+                       or visible element on the page in a simplified format.
+        """
+        if not self.client or not self.page:
+            logger.error("CDP client or page not initialized for crawl.")
+            return ["Error: Browser session not properly initialized."]
 
-			partially_is_in_viewport = (
-				elem_left_bound < win_right_bound
-				and elem_right_bound >= win_left_bound
-				and elem_top_bound < win_lower_bound
-				and elem_lower_bound >= win_upper_bound
-			)
+        start_time = time.time()
+        self.page_element_buffer = {} # Reset buffer for current view
+        elements_of_interest: List[str] = []
+        id_counter = 0
 
-			if not partially_is_in_viewport:
-				continue
+        try:
+            # Get DOM snapshot using CDP
+            dom_snapshot = self.client.send(
+                "DOMSnapshot.captureSnapshot",
+                {"computedStyles": [], "includeDOMRects": True, "includePaintOrder": True},
+            )
+            strings: List[str] = dom_snapshot["strings"]
+            document_snapshot = dom_snapshot["documents"][0]
+            nodes = document_snapshot["nodes"]
+            layout = document_snapshot["layout"]
 
-			meta_data = []
+            # Helper to convert node name for simplified representation
+            def convert_node_name(node_name: str, is_clickable_node: bool) -> str:
+                node_name_lower = node_name.lower()
+                if node_name_lower == "a": return "link"
+                if node_name_lower == "input": return "input"
+                if node_name_lower == "textarea": return "textarea"
+                if node_name_lower == "img": return "img"
+                if node_name_lower == "button" or is_clickable_node: return "button"
+                return "text" # Default for other elements like P, DIV, SPAN, H1-H6 etc.
 
-			# Refactored to use dict to store and access attributes
-			element_attributes = find_attributes(
-				attributes[index], ["type", "placeholder", "aria-label", "title", "alt"]
-			)
+            # Pre-calculate viewport and screen dimensions
+            device_pixel_ratio = self.page.evaluate("window.devicePixelRatio")
+            if platform == "darwin" and device_pixel_ratio == 1: device_pixel_ratio = 2 # Common macOS correction
+            
+            win_upper_bound = self.page.evaluate("window.pageYOffset")
+            win_left_bound = self.page.evaluate("window.pageXOffset")
+            # Use viewport size for visible area, not screen size
+            viewport_size = self.page.viewport_size
+            if not viewport_size: viewport_size = {"width": 1280, "height": 1080} # Fallback
+            
+            win_width = viewport_size["width"]
+            win_height = viewport_size["height"]
+            win_right_bound = win_left_bound + win_width
+            win_lower_bound = win_upper_bound + win_height
 
-			ancestor_exception = {
-				tag: ancestor_exceptions[tag]["nodes"].get(str(index), (False, None))
-				for tag in ancestor_exceptions
-			}
-			
-			is_ancestor_of_anchor, anchor_id = ancestor_exception.get("a", (False, None))  
-			is_ancestor_of_button, button_id = ancestor_exception.get("button", (False, None))
-			ancestor_node_key = (
-				str(anchor_id) if is_ancestor_of_anchor else str(button_id) if is_ancestor_of_button else None
-			)
-			ancestor_node = (
-				child_nodes.setdefault(str(ancestor_node_key), []) 
-				if is_ancestor_of_anchor or is_ancestor_of_button
-				else None
-			)
+            # Process nodes
+            for i, node_idx in enumerate(layout["nodeIndex"]):
+                node_name_idx = nodes["nodeName"][node_idx]
+                node_name_str = strings[node_name_idx].lower()
 
-			if node_name == "#text" and ancestor_node is not None:
-				text = strings[node_value[index]]
-				if text in ["•", "|"]:
-					continue
-				ancestor_node.append({"type": "text", "value": text})
-			else:
-				if (node_name == "input" and element_attributes.get("type") == "submit") or node_name == "button":
-					node_name = "button"
-					element_attributes.pop("type", None)
-				
-				for key, value in element_attributes.items():
-					if ancestor_node is not None:
-						ancestor_node.append({"type": "attribute", "key": key, "value": value})
-					else:  
-						meta_data.append(value)
+                if node_name_str in BLACKLISTED_ELEMENTS:
+                    continue
 
-			element_node_value = None
-			if node_value[index] >= 0:
-				element_node_value = strings[node_value[index]]
-				if element_node_value == "|": 
-					continue
-			elif node_name == "input" and index in input_value_index:
-				input_text_index = input_value_index.index(index)
-				text_index = input_value_values[input_text_index]
-				if text_index >= 0:
-					element_node_value = strings[text_index]
+                x, y, width, height = layout["bounds"][i]
+                x /= device_pixel_ratio
+                y /= device_pixel_ratio
+                width /= device_pixel_ratio
+                height /= device_pixel_ratio
 
-			if (is_ancestor_of_anchor or is_ancestor_of_button) and (node_name != "a" and node_name != "button"):
-				continue
+                # Check if element is within viewport
+                is_in_viewport = (
+                    x < win_right_bound and (x + width) > win_left_bound and
+                    y < win_lower_bound and (y + height) > win_upper_bound
+                )
+                if not is_in_viewport or width == 0 or height == 0:
+                    continue
 
-			elements_in_view_port.append({
-				"node_index": str(index),
-				"backend_node_id": backend_node_id[index],
-				"node_name": node_name,
-				"node_value": element_node_value,
-				"node_meta": meta_data,
-				"is_clickable": index in is_clickable,
-				"origin_x": int(x),
-				"origin_y": int(y),
-				"center_x": int(x + (width / 2)),
-				"center_y": int(y + (height / 2)),
-			})
+                # Determine if clickable (more robustly if possible)
+                is_clickable_node = nodes["isClickable"]["index"][node_idx] if "isClickable" in nodes else (
+                    node_name_str in ["a", "button"] or 
+                    (node_name_str == "input" and nodes["attributes"][node_idx].get("type", "") not in ["hidden", "text", "password", "email", "search", "tel", "url", "number"])
+                )
 
-		elements_of_interest = []
-		id_counter = 0
 
-		for element in elements_in_view_port:
-			node_index = element["node_index"]
-			node_name = element["node_name"]
-			node_value = element["node_value"]
-			is_clickable = element["is_clickable"] 
-			meta_data = element["node_meta"]
+                element_text_content = ""
+                if nodes["nodeValue"][node_idx] >= 0: # Text nodes
+                    element_text_content = strings[nodes["nodeValue"][node_idx]].strip()
+                
+                # For input fields, try to get their current value
+                if node_name_str == "input" and nodes["inputValue"]["index"][node_idx] >= 0: # Check if index exists for inputValue
+                    value_idx = nodes["inputValue"]["value"][nodes["inputValue"]["index"].index(node_idx)]
+                    if value_idx >= 0:
+                        element_text_content = strings[value_idx]
+                
+                # Try to get ARIA label or alt text for more context
+                aria_label_idx = -1
+                alt_text_idx = -1
+                node_attributes = nodes["attributes"][node_idx]
+                for k_idx, v_idx in zip(node_attributes[0::2], node_attributes[1::2]):
+                    attr_name = strings[k_idx]
+                    if attr_name == "aria-label": aria_label_idx = v_idx
+                    elif attr_name == "alt": alt_text_idx = v_idx
+                
+                accessible_name = ""
+                if aria_label_idx != -1: accessible_name = strings[aria_label_idx]
+                elif alt_text_idx != -1: accessible_name = strings[alt_text_idx]
 
-			inner_text = f"{node_value} " if node_value else ""
-			meta = ""
+                final_text = element_text_content or accessible_name or node_name_str
+                final_text = re.sub(r'\s+', ' ', final_text).strip() # Normalize whitespace
 
-			if node_index in child_nodes:
-				for child in child_nodes[node_index]:
-					entry_type = child["type"]
-					entry_value = child["value"]
-					if entry_type == "attribute":
-						entry_key = child["key"]
-						meta_data.append(f'{entry_key}="{entry_value}"')
-					else:
-						inner_text += f"{entry_value} "
-			
-			if meta_data:
-				meta = f' {" ".join(meta_data)}'
-			inner_text = inner_text.strip()
-			
-			# Refactored to use descriptive variable names
-			should_include_element = (
-				inner_text != "" or
-				node_name in ["link", "input", "img", "button", "textarea"] or
-				(node_name == "button" and meta != "")
-			)
-			if not should_include_element:
-				continue
-   
-			page_element_buffer[id_counter] = element
-			
-			element_string = f'<{convert_name(node_name, is_clickable)} id={id_counter}{meta}>'
-			if inner_text:
-				element_string += f'{inner_text}</{convert_name(node_name, is_clickable)}>'
-			else:
-				element_string += '/>'
-			elements_of_interest.append(element_string)
-			
-			id_counter += 1
+                if not final_text and node_name_str not in ["input", "textarea", "img"]: # Keep inputs even if empty
+                    continue
 
-		print(f'Parsing time: {time.time() - start:.2f} seconds')
-		return elements_of_interest
+                simplified_tag_name = convert_node_name(node_name_str, is_clickable_node)
+                
+                self.page_element_buffer[id_counter] = {
+                    "backend_node_id": nodes["backendNodeId"][node_idx],
+                    "node_name": node_name_str,
+                    "text_content": final_text,
+                    "is_clickable": is_clickable_node,
+                    "origin_x": int(x), "origin_y": int(y),
+                    "center_x": int(x + width / 2), "center_y": int(y + height / 2),
+                }
+                
+                element_str = f"<{simplified_tag_name} id={id_counter}>{final_text}</{simplified_tag_name}>"
+                if node_name_str in ["input", "img", "textarea"] and not final_text: # Self-closing for empty inputs/imgs
+                     element_str = f"<{simplified_tag_name} id={id_counter} />"
 
-def start_interaction(model_id, objective, project_name):
-	_crawler = Crawler()
+                elements_of_interest.append(element_str)
+                id_counter += 1
 
-	def print_help():
-		print(
-			"(g) to visit url\n(u) scroll up\n(d) scroll down\n(c) to click\n(t) to type\n" +
-			"(h) to view commands again\n(r/enter) to run suggested command\n(o) change objective"
-		)
+        except PlaywrightError as e:
+            logger.error(f"Playwright error during crawl: {e}")
+            elements_of_interest.append(f"Error during crawl: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error during crawl: {e}")
+            elements_of_interest.append(f"Unexpected error during crawl: {e}")
+        
+        logger.debug(f"Crawl parsing time: {time.time() - start_time:.2f} seconds. Found {len(elements_of_interest)} elements.")
+        return elements_of_interest
 
-	def get_gpt_command(objective, url, previous_command, browser_content):
-		prompt = prompt_template
-		prompt = prompt.replace("$objective", objective)
-		prompt = prompt.replace("$url", url[:100])
-		prompt = prompt.replace("$previous_command", previous_command)
-		prompt = prompt.replace("$browser_content", browser_content[:4500])
-		response = LLM(model_id=model_id).inference(prompt)
-		return response
+    def close(self) -> None:
+        """Close the browser and stop Playwright."""
+        try:
+            if self.page: self.page.close()
+            if self.browser: self.browser.close()
+            if self.playwright_context: self.playwright_context.stop()
+            logger.info("Crawler browser and Playwright context closed.")
+        except PlaywrightError as e:
+            logger.error(f"Error closing crawler resources: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error closing crawler: {e}")
 
-	def run_cmd(cmd):
-		cmd = cmd.split("\n")[0]
 
-		if cmd.startswith("SCROLL UP"):
-			_crawler.scroll("up")
-		elif cmd.startswith("SCROLL DOWN"):
-			_crawler.scroll("down")
-		elif cmd.startswith("CLICK"):
-			commasplit = cmd.split(",")
-			id = commasplit[0].split(" ")[1]
-			_crawler.click(id)
-		elif cmd.startswith("TYPE"):
-			spacesplit = cmd.split(" ")
-			id = spacesplit[1]
-			text = " ".join(spacesplit[2:])
-			text = text[1:-1]
-			if cmd.startswith("TYPESUBMIT"):
-				text += '\n'  
-			_crawler.type(id, text)
+def start_interaction(
+    base_model_id: str, objective: str, project_name: str, max_steps: int = 10
+) -> None:
+    """
+    Start an LLM-driven browser interaction session.
 
-		time.sleep(2)
+    Args:
+        base_model_id (str): The base LLM model ID to use for decision making.
+        objective (str): The overall objective for the browsing session.
+        project_name (str): The name of the current project.
+        max_steps (int): Maximum number of interaction steps before stopping.
+    """
+    if PROMPT_TEMPLATE == "Error: Browser interaction prompt template not found.":
+        logger.error("Cannot start browser interaction due to missing prompt template.")
+        return
 
-	gpt_cmd = ""
-	prev_cmd = ""
-	_crawler.go_to_page("google.com")
+    crawler = Crawler()
+    llm = LLM(model_id=base_model_id)
+    env = Environment(loader=BaseLoader())
+    template = env.from_string(PROMPT_TEMPLATE)
 
-	try:
-		visits = 0
+    previous_command: str = "None"
+    
+    try:
+        crawler.go_to_page("https://www.google.com") # Start on Google
 
-		while True and visits < 5:
-			browser_content = "\n".join(_crawler.crawl())
-			prev_cmd = gpt_cmd
+        for i in range(max_steps):
+            logger.info(f"Interaction Step {i + 1}/{max_steps}")
+            
+            browser_content_elements: List[str] = crawler.crawl_page_content()
+            browser_content_str: str = "\n".join(browser_content_elements)
+            current_url: str = crawler.page.url
 
-			current_url = _crawler.page.url
-   
-			_crawler.screenshot(project_name)
-   
-			gpt_cmd = get_gpt_command(objective, current_url, prev_cmd, browser_content).strip()
-			run_cmd(gpt_cmd)
-   
-			visits += 1
-   
-	except KeyboardInterrupt:
-		print("\n[!] Ctrl+C detected, exiting gracefully.")
-		exit(0)
+            crawler.screenshot(project_name) # Take screenshot for state
+
+            rendered_prompt = template.render(
+                objective=objective,
+                url=current_url,
+                previous_command=previous_command,
+                browser_content=browser_content_str[:4500], # Truncate for context window
+            )
+
+            llm_response_str = llm.inference(rendered_prompt, project_name)
+            
+            # Parse LLM response
+            action_json: Optional[LLMAction] = None
+            match = re.search(r"```json\s*(\{.*?\})\s*```", llm_response_str, re.DOTALL)
+            if match:
+                try:
+                    action_json = json.loads(match.group(1))
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse LLM JSON response: {e}. Response: {llm_response_str}")
+                    # Decide how to handle - e.g., ask LLM to reformat or terminate
+                    break 
+            
+            if not action_json or not isinstance(action_json, dict):
+                logger.error(f"LLM response was not a valid JSON object: {llm_response_str}")
+                # Potentially ask LLM to reformat or terminate
+                break
+
+            action_type = action_json.get("action_type")
+            target_id = action_json.get("target_id")
+            text_value = action_json.get("text_value")
+            is_complete = action_json.get("is_complete", False)
+            justification = action_json.get("justification", "No justification provided.")
+
+            logger.info(f"LLM Action: {action_type}, Target: {target_id}, Text: {text_value}, Complete: {is_complete}, Justification: {justification}")
+            previous_command = f"{action_type} {target_id if target_id else ''} {text_value if text_value else ''}".strip()
+
+
+            if is_complete:
+                logger.info(f"Objective marked as complete by LLM. Justification: {justification}")
+                AgentState().add_to_current_state(project_name, AgentState().new_state().update({ # type: ignore
+                    "internal_monologue": f"Objective achieved: {justification}",
+                    "browser_session": {"url": current_url, "screenshot": None} # Update with last screenshot if available
+                }))
+                break
+            
+            if action_type == "FAIL":
+                logger.warning(f"LLM indicated failure to achieve objective. Reason: {justification}")
+                AgentState().add_to_current_state(project_name, AgentState().new_state().update({ # type: ignore
+                    "internal_monologue": f"Objective failed: {justification}",
+                     "browser_session": {"url": current_url, "screenshot": None}
+                }))
+                break
+
+            if action_type == "SCROLL" and text_value:
+                crawler.scroll(text_value.lower())
+            elif action_type == "CLICK" and target_id:
+                crawler.click(target_id)
+            elif action_type == "TYPE" and target_id and text_value is not None:
+                crawler.type_into(target_id, text_value, submit=False)
+            elif action_type == "TYPESUBMIT" and target_id and text_value is not None:
+                crawler.type_into(target_id, text_value, submit=True)
+            else:
+                logger.warning(f"Unknown or invalid action from LLM: {action_json}")
+                # Potentially ask LLM to clarify or provide a valid action
+
+            time.sleep(2) # Wait for page to load/update after action
+
+            if i == max_steps - 1:
+                logger.info("Max interaction steps reached.")
+                AgentState().add_to_current_state(project_name, AgentState().new_state().update({ # type: ignore
+                    "internal_monologue": "Max interaction steps reached. Objective might not be fully complete.",
+                     "browser_session": {"url": crawler.page.url, "screenshot": None}
+                }))
+
+
+    except KeyboardInterrupt:
+        logger.info("Browser interaction interrupted by user (Ctrl+C).")
+    except Exception as e:
+        logger.error(f"An unexpected error occurred during browser interaction: {e}", exc_info=True)
+    finally:
+        crawler.close()
+        logger.info("Browser interaction session finished.")
